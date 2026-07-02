@@ -5,8 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { toast } from "@/hooks/use-toast";
 import {
-  transformSpreadsheet,
-  buildFormattedWorkbook,
+  transformRows,
+  buildXlsx,
   type SheetRow,
 } from "@/lib/transformSpreadsheet";
 
@@ -55,11 +55,11 @@ const Index = () => {
     setLoading(true);
     try {
       const buf = await f.arrayBuffer();
-      const wb = XLSX.read(buf, { type: "array" });
+      const wb = XLSX.read(buf, { type: "array", cellDates: true });
       const firstSheet = wb.SheetNames[0];
       if (!firstSheet) throw new Error("Nenhuma aba encontrada");
       const ws = wb.Sheets[firstSheet];
-      const json = XLSX.utils.sheet_to_json<SheetRow>(ws, { defval: "" });
+      const json = XLSX.utils.sheet_to_json<SheetRow>(ws, { defval: "", raw: true });
       if (json.length === 0) {
         toast({
           title: "Planilha vazia",
@@ -95,19 +95,27 @@ const Index = () => {
     if (rows.length === 0) return;
     setGenerating(true);
     try {
-      const result = transformSpreadsheet(rows);
-      const wb = buildFormattedWorkbook(result);
+      const result = transformRows(rows);
+      const blob = await buildXlsx(result);
       const base = file?.name.replace(/\.(xlsx|xls)$/i, "") ?? "planilha";
-      XLSX.writeFile(wb, `${base}-formatada.xlsx`);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${base}-formatada.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
       toast({
         title: "Planilha gerada",
-        description: "O download foi iniciado. Nenhum dado foi armazenado.",
+        description: `${result.notas.length} nota(s) fiscal(is) exportada(s). Nenhum dado foi armazenado.`,
       });
     } catch (err) {
       console.error(err);
+      const msg = err instanceof Error ? err.message : "Tente novamente com outro arquivo.";
       toast({
         title: "Erro ao gerar planilha",
-        description: "Tente novamente com outro arquivo.",
+        description: msg,
         variant: "destructive",
       });
     } finally {
