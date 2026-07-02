@@ -8,6 +8,7 @@ export interface NotaFiscal {
   notaFiscal: string;
   valorNF: number;
   faltaPagar: number;
+  informacoes: string;
 }
 
 const HIST_KEYS = ["Descrição histórico", "Descricao historico", "DescriÃ§Ã£o histÃ³rico"];
@@ -89,6 +90,58 @@ export interface TransformResult {
   notas: NotaFiscal[];
 }
 
+// ============ Previous month lookup ============
+
+const PREV_FORNECEDOR_KEYS = ["FORNECEDOR", "Fornecedor"];
+const PREV_NOTA_KEYS = ["NOTA FISCAL", "Nota Fiscal", "NotaFiscal", "NF"];
+const PREV_INFO_KEYS = ["INFORMAÇÕES", "INFORMACOES", "Informações", "Informacoes"];
+
+function normNota(v: unknown): string {
+  if (v == null) return "";
+  let s = String(v).trim();
+  s = s.replace(/\.0+$/, "");
+  return s;
+}
+
+function normFornecedor(v: unknown): string {
+  if (v == null) return "";
+  return String(v).trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+export function buildPreviousInfoMap(rows: SheetRow[]): Map<string, string> {
+  const map = new Map<string, string>();
+  if (rows.length === 0) return map;
+  const sample = rows[0];
+  const fornKey = findKey(sample, PREV_FORNECEDOR_KEYS);
+  const notaKey = findKey(sample, PREV_NOTA_KEYS);
+  const infoKey = findKey(sample, PREV_INFO_KEYS);
+  if (!fornKey || !notaKey || !infoKey) {
+    throw new Error(
+      "A planilha do mês anterior precisa conter as colunas FORNECEDOR, NOTA FISCAL e INFORMAÇÕES.",
+    );
+  }
+  for (const row of rows) {
+    const nota = normNota(row[notaKey]);
+    const forn = normFornecedor(row[fornKey]);
+    const info = row[infoKey];
+    if (!nota || !forn) continue;
+    if (info == null || String(info).trim() === "") continue;
+    map.set(`${nota}||${forn}`, String(info));
+  }
+  return map;
+}
+
+export function applyPreviousInfo(
+  notas: NotaFiscal[],
+  prevMap: Map<string, string>,
+): void {
+  for (const nota of notas) {
+    const key = `${normNota(nota.notaFiscal)}||${normFornecedor(nota.fornecedor)}`;
+    const info = prevMap.get(key);
+    if (info) nota.informacoes = info;
+  }
+}
+
 export function transformRows(rows: SheetRow[]): TransformResult {
   if (rows.length === 0) throw new Error("Planilha vazia.");
   const sample = rows[0];
@@ -116,6 +169,7 @@ export function transformRows(rows: SheetRow[]): TransformResult {
       notaFiscal: parsed.numero ?? "",
       valorNF: valor,
       faltaPagar: valor,
+      informacoes: "",
     };
     notas.push(nota);
     if (parsed.numero) byNumero.set(parsed.numero, nota);
@@ -174,6 +228,7 @@ export async function buildXlsx(result: TransformResult): Promise<Blob> {
     { header: "NOTA FISCAL", key: "nota", width: 15 },
     { header: "VALOR DA NF", key: "valor", width: 18 },
     { header: "FALTA PAGAR", key: "falta", width: 18 },
+    { header: "INFORMAÇÕES", key: "info", width: 60 },
   ];
 
   // Header style
@@ -202,6 +257,7 @@ export async function buildXlsx(result: TransformResult): Promise<Blob> {
       nota: nota.notaFiscal,
       valor: nota.valorNF,
       falta: nota.faltaPagar,
+      info: nota.informacoes ?? "",
     });
   }
 
@@ -230,8 +286,8 @@ export async function buildXlsx(result: TransformResult): Promise<Blob> {
       };
       cell.alignment = {
         vertical: "middle",
-        horizontal: "center",
-        wrapText: colNum === 2,
+        horizontal: colNum === 2 || colNum === 6 ? "left" : "center",
+        wrapText: colNum === 2 || colNum === 6,
       };
       cell.fill = {
         type: "pattern",
