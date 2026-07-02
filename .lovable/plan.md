@@ -1,27 +1,35 @@
-## Situação
+## Motivo
 
-No meu teste automatizado a página `/` renderiza normalmente (cabeçalho + área de upload), o dev server não reporta erros e o HTML servido está correto. Como do seu lado a tela continua totalmente branca mesmo após hard refresh, provavelmente há um erro de runtime acontecendo só no seu navegador (extensão, ambiente, ou algo específico do iframe do preview) que atualmente derruba a árvore React inteira sem deixar rastro visível.
+A linha `VALOR NF 2219-CAMPO NOVO COMERCIO E SERVICOS EIRELI ME` não entrou porque o extrator exige um hífen **logo depois de "NF"** (padrão `VALOR NF - 2219 - FORNECEDOR`). Nessa linha o hífen aparece só entre o número e o fornecedor (`NF 2219-CAMPO...`), então a regex atual falha e a linha é ignorada.
 
-## O que vou fazer
+Trecho responsável em `src/lib/transformSpreadsheet.ts`:
 
-1. **Criar `src/components/ErrorBoundary.tsx`**
-   - Componente de classe React que captura erros de render/lifecycle.
-   - Em caso de erro, mostra uma tela amigável com:
-     - Título "Algo deu errado ao carregar o app"
-     - Mensagem de erro e stack (pré-formatado, para copiar/colar)
-     - Botão "Recarregar página"
-   - Sem tela branca: mesmo que o `Index` quebre, algo é renderizado.
+```ts
+const mNF = s.match(/^VALOR\s+NF\s*-\s*(.+)$/i); // exige "-" após NF
+```
 
-2. **Envolver o app em `src/App.tsx`**
-   - Colocar `<ErrorBoundary>` como wrapper mais externo, antes do `QueryClientProvider`, para pegar qualquer erro.
+## Ajuste proposto
 
-3. **Verificar**
-   - Rodar o preview via Playwright, confirmar que continua renderizando a home normal.
-   - Se do seu lado a tela permanecer "branca", agora vamos ver a mensagem de erro em vez de nada — e conseguimos corrigir a causa real.
+Em `src/lib/transformSpreadsheet.ts`, dentro de `parseDescricao`:
 
-## Fora do escopo
+1. Tornar o hífen após `NF` opcional, aceitando os dois formatos:
+   - `VALOR NF - 2219 - FORNECEDOR`
+   - `VALOR NF 2219-FORNECEDOR`
+   - `VALOR NF 2219 FORNECEDOR`
 
-- Não vou mexer em `Index.tsx`, `transformSpreadsheet.ts`, nem na lógica de conversão.
-- Não vou alterar rotas, estilos ou dependências.
+   Nova regex:
+   ```ts
+   const mNF = s.match(/^VALOR\s+NF\b[\s-]*(.+)$/i);
+   ```
 
-Após aplicar, se ainda ficar em branco, me mande o texto que aparecer na tela de erro (ou um print do Console do navegador com F12).
+2. Ajustar a extração de número + fornecedor a partir do resto para funcionar com separador `-`, espaço, ou ambos:
+   ```ts
+   const m = rest.match(/^(\d+)\s*[-–]?\s*(.+)$/);
+   ```
+   (o número vem primeiro; o restante — após hífen ou espaço — é o fornecedor, que continua passando por `cleanFornecedor`).
+
+3. Nenhuma outra regra muda: abatimento de negativos, cálculo de FALTA PAGAR, formatação e coluna INFORMAÇÕES seguem iguais.
+
+## Resultado esperado
+
+A NF 2219 (CAMPO NOVO COMERCIO E SERVICOS EIRELI ME) passa a ser reconhecida e aparece na planilha gerada, junto com os abatimentos que referenciem `NF 2219` / `NF - 2219`.
