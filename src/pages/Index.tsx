@@ -7,6 +7,8 @@ import { toast } from "@/hooks/use-toast";
 import {
   transformRows,
   buildXlsx,
+  buildPreviousInfoMap,
+  applyPreviousInfo,
   type SheetRow,
 } from "@/lib/transformSpreadsheet";
 
@@ -25,7 +27,12 @@ const Index = () => {
   const [dragOver, setDragOver] = useState(false);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [prevFile, setPrevFile] = useState<File | null>(null);
+  const [prevRows, setPrevRows] = useState<SheetRow[]>([]);
+  const [prevLoading, setPrevLoading] = useState(false);
+  const [prevDragOver, setPrevDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const prevInputRef = useRef<HTMLInputElement>(null);
 
   const reset = () => {
     setFile(null);
@@ -33,6 +40,56 @@ const Index = () => {
     setHeaders([]);
     if (inputRef.current) inputRef.current.value = "";
   };
+
+  const resetPrev = () => {
+    setPrevFile(null);
+    setPrevRows([]);
+    if (prevInputRef.current) prevInputRef.current.value = "";
+  };
+
+  const handlePrevFile = useCallback(async (f: File) => {
+    const lower = f.name.toLowerCase();
+    if (!ACCEPTED.some((ext) => lower.endsWith(ext))) {
+      toast({
+        title: "Arquivo inválido",
+        description: "Envie uma planilha .xlsx ou .xls.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setPrevLoading(true);
+    try {
+      const buf = await f.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array", cellDates: true });
+      const firstSheet = wb.SheetNames[0];
+      if (!firstSheet) throw new Error("Nenhuma aba encontrada");
+      const ws = wb.Sheets[firstSheet];
+      const json = XLSX.utils.sheet_to_json<SheetRow>(ws, { defval: "", raw: true });
+      // Validate columns
+      try {
+        buildPreviousInfoMap(json);
+      } catch (err) {
+        toast({
+          title: "Planilha do mês anterior inválida",
+          description: err instanceof Error ? err.message : "Colunas ausentes.",
+          variant: "destructive",
+        });
+        setPrevLoading(false);
+        return;
+      }
+      setPrevFile(f);
+      setPrevRows(json);
+    } catch (err) {
+      console.error(err);
+      toast({
+        title: "Falha ao ler arquivo",
+        description: "Não foi possível ler a planilha do mês anterior.",
+        variant: "destructive",
+      });
+    } finally {
+      setPrevLoading(false);
+    }
+  }, []);
 
   const handleFile = useCallback(async (f: File) => {
     const lower = f.name.toLowerCase();
@@ -96,6 +153,10 @@ const Index = () => {
     setGenerating(true);
     try {
       const result = transformRows(rows);
+      if (prevRows.length > 0) {
+        const map = buildPreviousInfoMap(prevRows);
+        applyPreviousInfo(result.notas, map);
+      }
       const blob = await buildXlsx(result);
       const base = file?.name.replace(/\.(xlsx|xls)$/i, "") ?? "planilha";
       const url = URL.createObjectURL(blob);
