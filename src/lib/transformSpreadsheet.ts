@@ -59,11 +59,11 @@ function parseDescricao(desc: string): Parsed {
   const s = desc.trim();
   const upper = s.toUpperCase();
 
-  // Nota fiscal principal
-  const mNF = s.match(/^VALOR\s+NF\s*-\s*(.+)$/i);
+  // Nota fiscal principal — aceita "VALOR NF - 2219 - X", "VALOR NF 2219-X", "VALOR NF 2219 X"
+  const mNF = s.match(/^VALOR\s+NF\b[\s-]*(.+)$/i);
   if (mNF) {
     const rest = mNF[1].trim();
-    const m = rest.match(/^(\d+)\s*[-\s]\s*(.+)$/);
+    const m = rest.match(/^(\d+)\s*[-–]?\s*(.+)$/);
     if (m) {
       return {
         isNF: true,
