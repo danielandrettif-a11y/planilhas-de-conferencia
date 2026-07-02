@@ -214,9 +214,9 @@ const Index = () => {
         </div>
 
         <Card className="p-6">
-          <h2 className="mb-1 text-base font-semibold">1. Enviar planilha</h2>
+          <h2 className="mb-1 text-base font-semibold">1. Planilha bruta do mês atual</h2>
           <p className="mb-4 text-sm text-muted-foreground">
-            Arraste um arquivo .xlsx ou .xls exportado do Alterdata, ou clique para selecionar.
+            Envie a planilha exportada do Alterdata.
           </p>
 
           {!file ? (
@@ -271,12 +271,77 @@ const Index = () => {
           )}
         </Card>
 
+        <Card className="p-6">
+          <h2 className="mb-1 text-base font-semibold">
+            2. Planilha do mês anterior <span className="text-xs font-normal text-muted-foreground">(opcional)</span>
+          </h2>
+          <p className="mb-4 text-sm text-muted-foreground">
+            Envie a planilha final do mês anterior para importar a coluna INFORMAÇÕES.
+          </p>
+
+          {!prevFile ? (
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                setPrevDragOver(true);
+              }}
+              onDragLeave={() => setPrevDragOver(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setPrevDragOver(false);
+                const f = e.dataTransfer.files?.[0];
+                if (f) handlePrevFile(f);
+              }}
+              onClick={() => prevInputRef.current?.click()}
+              className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed px-6 py-10 text-center transition-colors ${
+                prevDragOver
+                  ? "border-primary bg-accent/50"
+                  : "border-border hover:border-primary/60 hover:bg-muted/40"
+              }`}
+            >
+              <Upload className="mb-3 h-8 w-8 text-muted-foreground" />
+              <p className="font-medium">
+                {prevLoading ? "Lendo arquivo..." : "Solte a planilha do mês anterior aqui"}
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                ou clique para escolher (.xlsx, .xls)
+              </p>
+              <input
+                ref={prevInputRef}
+                type="file"
+                accept=".xlsx,.xls"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handlePrevFile(f);
+                }}
+              />
+            </div>
+          ) : (
+            <div className="flex items-center justify-between rounded-lg border bg-muted/30 px-4 py-3">
+              <div className="flex items-center gap-3">
+                <FileSpreadsheet className="h-8 w-8 text-primary" />
+                <div>
+                  <p className="font-medium">{prevFile.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {formatSize(prevFile.size)} · {prevRows.length} linhas
+                  </p>
+                </div>
+              </div>
+              <Button variant="ghost" size="sm" onClick={resetPrev}>
+                <X className="mr-1 h-4 w-4" />
+                Remover
+              </Button>
+            </div>
+          )}
+        </Card>
+
         {rows.length > 0 && (
           <>
             <Card className="p-6">
-              <h2 className="mb-1 text-base font-semibold">2. Prévia</h2>
+              <h2 className="mb-1 text-base font-semibold">3. Prévia</h2>
               <p className="mb-4 text-sm text-muted-foreground">
-                Primeiras {previewRows.length} linhas do arquivo carregado.
+                Primeiras {previewRows.length} linhas da planilha bruta carregada.
               </p>
               <div className="overflow-x-auto rounded-md border">
                 <table className="w-full text-sm">
@@ -309,9 +374,11 @@ const Index = () => {
 
             <Card className="flex flex-col items-start gap-3 p-6 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h2 className="text-base font-semibold">3. Gerar planilha formatada</h2>
+                <h2 className="text-base font-semibold">4. Gerar planilha formatada</h2>
                 <p className="text-sm text-muted-foreground">
-                  Um arquivo .xlsx será gerado com a formatação base e baixado imediatamente.
+                  {prevFile
+                    ? "A coluna INFORMAÇÕES será preenchida com base na planilha do mês anterior."
+                    : "A coluna INFORMAÇÕES será gerada em branco (nenhuma planilha anterior enviada)."}
                 </p>
               </div>
               <Button size="lg" onClick={onGenerate} disabled={generating}>
