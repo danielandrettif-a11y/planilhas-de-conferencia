@@ -343,12 +343,17 @@ function toJsDate(v: unknown): Date | null {
   return null;
 }
 
-export async function buildXlsx(result: TransformResult): Promise<Blob> {
-  const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet("Notas Fiscais", {
-    views: [{ state: "frozen", ySplit: 1 }],
-  });
+export interface SheetInput {
+  conta: string;
+  result: TransformResult;
+}
 
+function sanitizeSheetName(name: string): string {
+  // Excel sheet name rules: max 31 chars, no []:*?/\
+  return name.replace(/[\[\]:*?\/\\]/g, "_").slice(0, 31) || "Sheet";
+}
+
+function populateSheet(ws: ExcelJS.Worksheet, result: TransformResult): void {
   ws.columns = [
     { header: "DATA", key: "data", width: 14 },
     { header: "FORNECEDOR", key: "fornecedor", width: 45 },
@@ -426,7 +431,22 @@ export async function buildXlsx(result: TransformResult): Promise<Blob> {
       if (colNum === 4 || colNum === 5) cell.numFmt = currencyFmt;
     });
   }
+}
 
+export async function buildXlsx(input: TransformResult | SheetInput[]): Promise<Blob> {
+  const wb = new ExcelJS.Workbook();
+  const sheets: SheetInput[] = Array.isArray(input)
+    ? input
+    : [{ conta: "Notas Fiscais", result: input }];
+  const used = new Set<string>();
+  for (const { conta, result } of sheets) {
+    let name = sanitizeSheetName(conta);
+    let i = 2;
+    while (used.has(name)) name = sanitizeSheetName(`${conta}_${i++}`);
+    used.add(name);
+    const ws = wb.addWorksheet(name, { views: [{ state: "frozen", ySplit: 1 }] });
+    populateSheet(ws, result);
+  }
   const buffer = await wb.xlsx.writeBuffer();
   return new Blob([buffer], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
