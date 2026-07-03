@@ -232,6 +232,7 @@ const Index = () => {
           </p>
         </div>
 
+        <div className="grid gap-6 lg:grid-cols-2">
         <StepCard
           step="01"
           title="Planilha bruta do mês atual"
@@ -285,6 +286,7 @@ const Index = () => {
             />
           )}
         </StepCard>
+        </div>
 
         {rows.length > 0 && (
           <div className="relative overflow-hidden rounded-3xl border border-primary/30 bg-[var(--gradient-surface)] p-8 shadow-[var(--shadow-soft)]">
