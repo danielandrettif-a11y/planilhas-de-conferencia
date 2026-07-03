@@ -28,6 +28,15 @@
 
   <body>
     <div id="root"></div>
+    <script>
+      (function(){
+        try {
+          var t = localStorage.getItem('theme');
+          if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+          if (t === 'dark') document.documentElement.classList.add('dark');
+        } catch(e) {}
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
