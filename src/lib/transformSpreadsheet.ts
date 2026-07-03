@@ -134,7 +134,52 @@ function normNota(v: unknown): string {
 
 function normFornecedor(v: unknown): string {
   if (v == null) return "";
-  return String(v).trim().replace(/\s+/g, " ").toLowerCase();
+  return String(v)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function fornecedorTokens(v: unknown): Set<string> {
+  const stop = new Set([
+    "ltda", "me", "epp", "sa", "s", "a", "eireli", "cia", "e", "de", "da", "do",
+    "das", "dos", "the", "com",
+  ]);
+  return new Set(
+    normFornecedor(v)
+      .split(" ")
+      .filter((t) => t.length >= 3 && !stop.has(t)),
+  );
+}
+
+function tokenOverlap(a: Set<string>, b: Set<string>): number {
+  let n = 0;
+  for (const t of a) if (b.has(t)) n++;
+  return n;
+}
+
+function formatInfoValue(v: unknown): string {
+  if (v == null) return "";
+  if (v instanceof Date) {
+    const d = String(v.getDate()).padStart(2, "0");
+    const m = String(v.getMonth() + 1).padStart(2, "0");
+    return `${d}/${m}/${v.getFullYear()}`;
+  }
+  if (typeof v === "number") {
+    // Excel date serial heuristic: values between 20000 (1954) and 80000 (2119) with reasonable range
+    if (v > 20000 && v < 80000 && Number.isInteger(v)) {
+      const utc = Math.round((v - 25569) * 86400 * 1000);
+      const dt = new Date(utc);
+      const d = String(dt.getDate()).padStart(2, "0");
+      const m = String(dt.getMonth() + 1).padStart(2, "0");
+      return `${d}/${m}/${dt.getFullYear()}`;
+    }
+    return String(v);
+  }
+  return String(v).trim();
 }
 
 export function buildPreviousInfoMap(rows: SheetRow[]): Map<string, string> {
