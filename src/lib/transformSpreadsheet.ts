@@ -233,21 +233,18 @@ export function applyPreviousInfo(
   for (const nota of notas) {
     const candidates = prevMap.get(normNota(nota.notaFiscal));
     if (!candidates || candidates.length === 0) continue;
+    // Sempre exigir match por fornecedor (via overlap de tokens) além da NF.
+    // Se o fornecedor não bater, deixar em branco — a NF pode ser nova (mês atual)
+    // e coincidir por acaso com uma NF antiga de outro fornecedor.
+    const genTokens = fornecedorTokens(nota.fornecedor);
     let chosen: PrevEntry | null = null;
-    if (candidates.length === 1) {
-      chosen = candidates[0];
-    } else {
-      const genTokens = fornecedorTokens(nota.fornecedor);
-      let bestScore = -1;
-      for (const c of candidates) {
-        const score = tokenOverlap(genTokens, c.tokens);
-        if (score > bestScore) {
-          bestScore = score;
-          chosen = c;
-        }
+    let bestScore = 0;
+    for (const c of candidates) {
+      const score = tokenOverlap(genTokens, c.tokens);
+      if (score > bestScore) {
+        bestScore = score;
+        chosen = c;
       }
-      // Require at least one token overlap when there is ambiguity.
-      if (bestScore <= 0) chosen = null;
     }
     if (chosen) nota.informacoes = chosen.info;
   }
