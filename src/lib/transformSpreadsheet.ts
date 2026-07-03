@@ -129,6 +129,11 @@ function normNota(v: unknown): string {
   if (v == null) return "";
   let s = String(v).trim();
   s = s.replace(/\.0+$/, "");
+  // Remove qualquer caractere que não seja dígito (pontos iniciais, espaços internos,
+  // hifens, etc.) — o número da NF é sempre puramente numérico.
+  s = s.replace(/\D+/g, "");
+  // Remove zeros à esquerda.
+  s = s.replace(/^0+/, "");
   return s;
 }
 
