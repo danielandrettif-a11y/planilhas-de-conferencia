@@ -46,7 +46,17 @@ function cleanFornecedor(name: string): string {
   let s = name.trim();
   s = s.replace(/^\d{1,3}(?:\.\d{3})+(?:[-/]\d+)*\s+/, "");
   s = s.replace(/^\d{3}\.\d{3}\.\d{3}(?:-\d{2})?\s+/, "");
-  return s.trim();
+  // Strip trailing bank/description noise: "... REFERENTE SERVIÇOS PRESTADOS ...",
+  // "... REF. ...", "... NOTA FISCAL ...", "... INTERNET MÊS ...".
+  s = s.replace(
+    /\s+(REFERENTE|REF\.?|NOTA\s+FISCAL|INTERNET\s+M[ÊE]S|CONFORME|PAGAMENTO)\b.*$/i,
+    "",
+  );
+  // Collapse extra whitespace.
+  s = s.replace(/\s+/g, " ").trim();
+  // Drop trailing punctuation.
+  s = s.replace(/[\s.,;:-]+$/, "").trim();
+  return s;
 }
 
 interface Parsed {
@@ -124,11 +134,64 @@ function normNota(v: unknown): string {
 
 function normFornecedor(v: unknown): string {
   if (v == null) return "";
-  return String(v).trim().replace(/\s+/g, " ").toLowerCase();
+  return String(v)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-export function buildPreviousInfoMap(rows: SheetRow[]): Map<string, string> {
-  const map = new Map<string, string>();
+function fornecedorTokens(v: unknown): Set<string> {
+  const stop = new Set([
+    "ltda", "me", "epp", "sa", "s", "a", "eireli", "cia", "e", "de", "da", "do",
+    "das", "dos", "the", "com",
+  ]);
+  return new Set(
+    normFornecedor(v)
+      .split(" ")
+      .filter((t) => t.length >= 3 && !stop.has(t)),
+  );
+}
+
+function tokenOverlap(a: Set<string>, b: Set<string>): number {
+  let n = 0;
+  for (const t of a) if (b.has(t)) n++;
+  return n;
+}
+
+function formatInfoValue(v: unknown): string {
+  if (v == null) return "";
+  if (v instanceof Date) {
+    const d = String(v.getDate()).padStart(2, "0");
+    const m = String(v.getMonth() + 1).padStart(2, "0");
+    return `${d}/${m}/${v.getFullYear()}`;
+  }
+  if (typeof v === "number") {
+    // Excel date serial heuristic: values between 20000 (1954) and 80000 (2119) with reasonable range
+    if (v > 20000 && v < 80000 && Number.isInteger(v)) {
+      const utc = Math.round((v - 25569) * 86400 * 1000);
+      const dt = new Date(utc);
+      const d = String(dt.getDate()).padStart(2, "0");
+      const m = String(dt.getMonth() + 1).padStart(2, "0");
+      return `${d}/${m}/${dt.getFullYear()}`;
+    }
+    return String(v);
+  }
+  return String(v).trim();
+}
+
+export interface PrevEntry {
+  fornecedor: string;
+  tokens: Set<string>;
+  info: string;
+}
+
+export function buildPreviousInfoMap(
+  rows: SheetRow[],
+): Map<string, PrevEntry[]> {
+  const map = new Map<string, PrevEntry[]>();
   if (rows.length === 0) return map;
   const sample = rows[0];
   const fornKey = findKey(sample, PREV_FORNECEDOR_KEYS);
@@ -141,23 +204,47 @@ export function buildPreviousInfoMap(rows: SheetRow[]): Map<string, string> {
   }
   for (const row of rows) {
     const nota = normNota(row[notaKey]);
-    const forn = normFornecedor(row[fornKey]);
+    const forn = row[fornKey];
     const info = row[infoKey];
-    if (!nota || !forn) continue;
-    if (info == null || String(info).trim() === "") continue;
-    map.set(`${nota}||${forn}`, String(info));
+    if (!nota || forn == null || String(forn).trim() === "") continue;
+    const infoStr = formatInfoValue(info);
+    if (!infoStr) continue;
+    const entry: PrevEntry = {
+      fornecedor: String(forn),
+      tokens: fornecedorTokens(forn),
+      info: infoStr,
+    };
+    const arr = map.get(nota);
+    if (arr) arr.push(entry);
+    else map.set(nota, [entry]);
   }
   return map;
 }
 
 export function applyPreviousInfo(
   notas: NotaFiscal[],
-  prevMap: Map<string, string>,
+  prevMap: Map<string, PrevEntry[]>,
 ): void {
   for (const nota of notas) {
-    const key = `${normNota(nota.notaFiscal)}||${normFornecedor(nota.fornecedor)}`;
-    const info = prevMap.get(key);
-    if (info) nota.informacoes = info;
+    const candidates = prevMap.get(normNota(nota.notaFiscal));
+    if (!candidates || candidates.length === 0) continue;
+    let chosen: PrevEntry | null = null;
+    if (candidates.length === 1) {
+      chosen = candidates[0];
+    } else {
+      const genTokens = fornecedorTokens(nota.fornecedor);
+      let bestScore = -1;
+      for (const c of candidates) {
+        const score = tokenOverlap(genTokens, c.tokens);
+        if (score > bestScore) {
+          bestScore = score;
+          chosen = c;
+        }
+      }
+      // Require at least one token overlap when there is ambiguity.
+      if (bestScore <= 0) chosen = null;
+    }
+    if (chosen) nota.informacoes = chosen.info;
   }
 }
 
