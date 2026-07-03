@@ -1,35 +1,16 @@
-## Motivo
+## Situação
 
-A linha `VALOR NF 2219-CAMPO NOVO COMERCIO E SERVICOS EIRELI ME` não entrou porque o extrator exige um hífen **logo depois de "NF"** (padrão `VALOR NF - 2219 - FORNECEDOR`). Nessa linha o hífen aparece só entre o número e o fornecedor (`NF 2219-CAMPO...`), então a regex atual falha e a linha é ignorada.
+O projeto ainda **não foi publicado** — por isso não existe um link `.lovable.app` funcionando. O que você vê hoje é apenas o *preview* interno do editor.
 
-Trecho responsável em `src/lib/transformSpreadsheet.ts`:
+## Ação
 
-```ts
-const mNF = s.match(/^VALOR\s+NF\s*-\s*(.+)$/i); // exige "-" após NF
-```
+1. Publicar o projeto pela primeira vez, gerando a URL pública `.lovable.app`.
+2. Confirmar o link publicado e te passar o endereço final.
+3. Manter a visibilidade atual (pública por padrão) para que o link abra sem precisar de login do Lovable — caso prefira restrito ao workspace, me avise antes.
 
-## Ajuste proposto
+## Depois de publicado
 
-Em `src/lib/transformSpreadsheet.ts`, dentro de `parseDescricao`:
+- Toda vez que fizer mudanças novas, será preciso clicar em **Update** no diálogo de publicação para o site público refletir as alterações (o preview do editor atualiza sozinho).
+- Se quiser, dá para conectar um domínio próprio depois em **Project Settings → Domains**.
 
-1. Tornar o hífen após `NF` opcional, aceitando os dois formatos:
-   - `VALOR NF - 2219 - FORNECEDOR`
-   - `VALOR NF 2219-FORNECEDOR`
-   - `VALOR NF 2219 FORNECEDOR`
-
-   Nova regex:
-   ```ts
-   const mNF = s.match(/^VALOR\s+NF\b[\s-]*(.+)$/i);
-   ```
-
-2. Ajustar a extração de número + fornecedor a partir do resto para funcionar com separador `-`, espaço, ou ambos:
-   ```ts
-   const m = rest.match(/^(\d+)\s*[-–]?\s*(.+)$/);
-   ```
-   (o número vem primeiro; o restante — após hífen ou espaço — é o fornecedor, que continua passando por `cleanFornecedor`).
-
-3. Nenhuma outra regra muda: abatimento de negativos, cálculo de FALTA PAGAR, formatação e coluna INFORMAÇÕES seguem iguais.
-
-## Resultado esperado
-
-A NF 2219 (CAMPO NOVO COMERCIO E SERVICOS EIRELI ME) passa a ser reconhecida e aparece na planilha gerada, junto com os abatimentos que referenciem `NF 2219` / `NF - 2219`.
+Posso publicar agora?
