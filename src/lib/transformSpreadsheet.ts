@@ -46,7 +46,17 @@ function cleanFornecedor(name: string): string {
   let s = name.trim();
   s = s.replace(/^\d{1,3}(?:\.\d{3})+(?:[-/]\d+)*\s+/, "");
   s = s.replace(/^\d{3}\.\d{3}\.\d{3}(?:-\d{2})?\s+/, "");
-  return s.trim();
+  // Strip trailing bank/description noise: "... REFERENTE SERVIÇOS PRESTADOS ...",
+  // "... REF. ...", "... NOTA FISCAL ...", "... INTERNET MÊS ...".
+  s = s.replace(
+    /\s+(REFERENTE|REF\.?|NOTA\s+FISCAL|INTERNET\s+M[ÊE]S|CONFORME|PAGAMENTO)\b.*$/i,
+    "",
+  );
+  // Collapse extra whitespace.
+  s = s.replace(/\s+/g, " ").trim();
+  // Drop trailing punctuation.
+  s = s.replace(/[\s.,;:-]+$/, "").trim();
+  return s;
 }
 
 interface Parsed {
