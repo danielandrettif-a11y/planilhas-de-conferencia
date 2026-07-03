@@ -3,6 +3,7 @@ import * as XLSX from "xlsx";
 import { FileSpreadsheet, Upload, Download, ShieldCheck, X, Loader2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import {
   transformRows,
   buildXlsx,
@@ -197,9 +198,12 @@ const Index = () => {
               <h1 className="text-lg font-semibold tracking-tight">Conversor de Planilhas</h1>
             </div>
           </div>
-          <div className="hidden sm:flex items-center gap-2 text-xs text-muted-foreground">
-            <span className="h-2 w-2 rounded-full bg-primary shadow-[0_0_10px_hsl(var(--primary))]" />
-            processamento local
+          <div className="flex items-center gap-3">
+            <div className="hidden sm:flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="h-2 w-2 rounded-full bg-primary shadow-[0_0_10px_hsl(var(--primary))]" />
+              processamento local
+            </div>
+            <ThemeToggle />
           </div>
         </div>
       </header>
