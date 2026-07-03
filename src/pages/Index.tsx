@@ -1,8 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import * as XLSX from "xlsx";
-import { FileSpreadsheet, Upload, Download, ShieldCheck, X, Loader2 } from "lucide-react";
+import { FileSpreadsheet, Upload, Download, ShieldCheck, X, Loader2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { toast } from "@/hooks/use-toast";
 import {
   transformRows,
@@ -184,217 +183,250 @@ const Index = () => {
     }
   };
 
-  const previewRows = rows.slice(0, 5);
-
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b bg-card">
-        <div className="container mx-auto flex items-center gap-3 py-5">
-          <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary text-primary-foreground">
-            <FileSpreadsheet className="h-5 w-5" />
+    <div className="min-h-screen">
+      <header className="border-b border-border/60 backdrop-blur-xl bg-background/40 sticky top-0 z-10">
+        <div className="container mx-auto flex items-center justify-between py-5">
+          <div className="flex items-center gap-3">
+            <div className="relative flex h-11 w-11 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-[var(--shadow-glow)]">
+              <FileSpreadsheet className="h-5 w-5" />
+              <div className="absolute inset-0 rounded-xl bg-primary/20 blur-md -z-10" />
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground font-mono">Alterdata · Conferência</p>
+              <h1 className="text-lg font-semibold tracking-tight">Conversor de Planilhas</h1>
+            </div>
           </div>
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight">
-              Conversor de Planilhas Alterdata
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              Ferramenta interna · processamento local no navegador
-            </p>
+          <div className="hidden sm:flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="h-2 w-2 rounded-full bg-primary shadow-[0_0_10px_hsl(var(--primary))]" />
+            processamento local
           </div>
         </div>
       </header>
 
-      <main className="container mx-auto max-w-5xl space-y-6 py-8">
-        <div className="flex items-start gap-3 rounded-md border border-accent bg-accent/60 px-4 py-3 text-sm text-accent-foreground">
-          <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
-          <p>
-            Nenhuma informação é salva. O arquivo é usado apenas para gerar
-            a nova planilha e é descartado ao fechar ou recarregar a página.
+      <main className="container mx-auto max-w-4xl px-4 py-14 space-y-10">
+        <section className="text-center space-y-5 max-w-2xl mx-auto">
+          <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-card/40 px-3 py-1 text-xs text-muted-foreground font-mono">
+            <Sparkles className="h-3 w-3 text-primary" />
+            zero uploads · zero storage
+          </div>
+          <h2 className="text-4xl sm:text-5xl font-semibold tracking-tight leading-[1.05]">
+            Transforme sua planilha bruta em{" "}
+            <span className="bg-clip-text text-transparent bg-[var(--gradient-primary)]">
+              relatório formatado
+            </span>
+          </h2>
+          <p className="text-muted-foreground text-base leading-relaxed">
+            Envie o export do Alterdata e receba uma planilha padronizada com fornecedor, nota fiscal e valores em segundos.
+          </p>
+        </section>
+
+        <div className="flex items-start gap-3 rounded-2xl border border-accent/40 bg-accent/20 backdrop-blur px-5 py-4 text-sm text-accent-foreground">
+          <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+          <p className="text-muted-foreground">
+            Nenhuma informação é salva. Tudo é processado no seu navegador e descartado ao fechar a página.
           </p>
         </div>
 
-        <Card className="p-6">
-          <h2 className="mb-1 text-base font-semibold">1. Planilha bruta do mês atual</h2>
-          <p className="mb-4 text-sm text-muted-foreground">
-            Envie a planilha exportada do Alterdata.
-          </p>
-
+        <StepCard
+          step="01"
+          title="Planilha bruta do mês atual"
+          description="Envie a planilha exportada do Alterdata."
+        >
           {!file ? (
-            <div
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragOver(true);
-              }}
-              onDragLeave={() => setDragOver(false)}
+            <Dropzone
+              inputRef={inputRef}
+              dragOver={dragOver}
+              setDragOver={setDragOver}
               onDrop={onDrop}
-              onClick={() => inputRef.current?.click()}
-              className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed px-6 py-12 text-center transition-colors ${
-                dragOver
-                  ? "border-primary bg-accent/50"
-                  : "border-border hover:border-primary/60 hover:bg-muted/40"
-              }`}
-            >
-              <Upload className="mb-3 h-8 w-8 text-muted-foreground" />
-              <p className="font-medium">
-                {loading ? "Lendo arquivo..." : "Solte o arquivo aqui"}
-              </p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                ou clique para escolher (.xlsx, .xls)
-              </p>
-              <input
-                ref={inputRef}
-                type="file"
-                accept=".xlsx,.xls"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) handleFile(f);
-                }}
-              />
-            </div>
+              onSelect={handleFile}
+              loading={loading}
+              label="Solte o arquivo aqui"
+            />
           ) : (
-            <div className="flex items-center justify-between rounded-lg border bg-muted/30 px-4 py-3">
-              <div className="flex items-center gap-3">
-                <FileSpreadsheet className="h-8 w-8 text-primary" />
-                <div>
-                  <p className="font-medium">{file.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {formatSize(file.size)} · {rows.length} linhas · {headers.length} colunas
-                  </p>
-                </div>
-              </div>
-              <Button variant="ghost" size="sm" onClick={reset}>
-                <X className="mr-1 h-4 w-4" />
-                Remover
-              </Button>
-            </div>
+            <FileChip
+              name={file.name}
+              info={`${formatSize(file.size)} · ${rows.length} linhas · ${headers.length} colunas`}
+              onRemove={reset}
+            />
           )}
-        </Card>
+        </StepCard>
 
-        <Card className="p-6">
-          <h2 className="mb-1 text-base font-semibold">
-            2. Planilha do mês anterior <span className="text-xs font-normal text-muted-foreground">(opcional)</span>
-          </h2>
-          <p className="mb-4 text-sm text-muted-foreground">
-            Envie a planilha final do mês anterior para importar a coluna INFORMAÇÕES.
-          </p>
-
+        <StepCard
+          step="02"
+          title="Planilha do mês anterior"
+          badge="opcional"
+          description="Importa a coluna INFORMAÇÕES da planilha final do mês anterior."
+        >
           {!prevFile ? (
-            <div
-              onDragOver={(e) => {
-                e.preventDefault();
-                setPrevDragOver(true);
-              }}
-              onDragLeave={() => setPrevDragOver(false)}
+            <Dropzone
+              inputRef={prevInputRef}
+              dragOver={prevDragOver}
+              setDragOver={setPrevDragOver}
               onDrop={(e) => {
                 e.preventDefault();
                 setPrevDragOver(false);
                 const f = e.dataTransfer.files?.[0];
                 if (f) handlePrevFile(f);
               }}
-              onClick={() => prevInputRef.current?.click()}
-              className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed px-6 py-10 text-center transition-colors ${
-                prevDragOver
-                  ? "border-primary bg-accent/50"
-                  : "border-border hover:border-primary/60 hover:bg-muted/40"
-              }`}
-            >
-              <Upload className="mb-3 h-8 w-8 text-muted-foreground" />
-              <p className="font-medium">
-                {prevLoading ? "Lendo arquivo..." : "Solte a planilha do mês anterior aqui"}
-              </p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                ou clique para escolher (.xlsx, .xls)
-              </p>
-              <input
-                ref={prevInputRef}
-                type="file"
-                accept=".xlsx,.xls"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) handlePrevFile(f);
-                }}
-              />
-            </div>
+              onSelect={handlePrevFile}
+              loading={prevLoading}
+              label="Solte a planilha do mês anterior aqui"
+            />
           ) : (
-            <div className="flex items-center justify-between rounded-lg border bg-muted/30 px-4 py-3">
-              <div className="flex items-center gap-3">
-                <FileSpreadsheet className="h-8 w-8 text-primary" />
-                <div>
-                  <p className="font-medium">{prevFile.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {formatSize(prevFile.size)} · {prevRows.length} linhas
-                  </p>
-                </div>
-              </div>
-              <Button variant="ghost" size="sm" onClick={resetPrev}>
-                <X className="mr-1 h-4 w-4" />
-                Remover
-              </Button>
-            </div>
+            <FileChip
+              name={prevFile.name}
+              info={`${formatSize(prevFile.size)} · ${prevRows.length} linhas`}
+              onRemove={resetPrev}
+            />
           )}
-        </Card>
+        </StepCard>
 
         {rows.length > 0 && (
-          <>
-            <Card className="p-6">
-              <h2 className="mb-1 text-base font-semibold">3. Prévia</h2>
-              <p className="mb-4 text-sm text-muted-foreground">
-                Primeiras {previewRows.length} linhas da planilha bruta carregada.
-              </p>
-              <div className="overflow-x-auto rounded-md border">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted/60">
-                    <tr>
-                      {headers.map((h) => (
-                        <th
-                          key={h}
-                          className="whitespace-nowrap border-b px-3 py-2 text-left font-medium"
-                        >
-                          {h}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {previewRows.map((r, i) => (
-                      <tr key={i} className="border-b last:border-b-0">
-                        {headers.map((h) => (
-                          <td key={h} className="whitespace-nowrap px-3 py-2">
-                            {String(r[h] ?? "")}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Card>
-
-            <Card className="flex flex-col items-start gap-3 p-6 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <h2 className="text-base font-semibold">4. Gerar planilha formatada</h2>
-                <p className="text-sm text-muted-foreground">
+          <div className="relative overflow-hidden rounded-3xl border border-primary/30 bg-[var(--gradient-surface)] p-8 shadow-[var(--shadow-soft)]">
+            <div className="absolute -top-24 -right-24 h-64 w-64 rounded-full bg-primary/20 blur-3xl" />
+            <div className="relative flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="space-y-1">
+                <p className="text-xs uppercase tracking-[0.25em] text-primary font-mono">03 · finalizar</p>
+                <h3 className="text-2xl font-semibold tracking-tight">Gerar planilha formatada</h3>
+                <p className="text-sm text-muted-foreground max-w-md">
                   {prevFile
-                    ? "A coluna INFORMAÇÕES será preenchida com base na planilha do mês anterior."
-                    : "A coluna INFORMAÇÕES será gerada em branco (nenhuma planilha anterior enviada)."}
+                    ? "A coluna INFORMAÇÕES será preenchida com base na planilha anterior."
+                    : "A coluna INFORMAÇÕES ficará em branco (nenhuma planilha anterior)."}
                 </p>
               </div>
-              <Button size="lg" onClick={onGenerate} disabled={generating}>
+              <Button
+                size="lg"
+                onClick={onGenerate}
+                disabled={generating}
+                className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-[var(--shadow-glow)] font-semibold"
+              >
                 {generating ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : (
                   <Download className="mr-2 h-4 w-4" />
                 )}
-                Gerar planilha formatada
+                Gerar planilha
               </Button>
-            </Card>
-          </>
+            </div>
+          </div>
         )}
+
+        <footer className="pt-8 pb-4 text-center text-xs text-muted-foreground font-mono">
+          feito para conferência interna
+        </footer>
       </main>
     </div>
   );
 };
+
+function StepCard({
+  step,
+  title,
+  description,
+  badge,
+  children,
+}: {
+  step: string;
+  title: string;
+  description: string;
+  badge?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="group rounded-3xl border border-border/60 bg-card/60 backdrop-blur p-6 sm:p-8 transition-colors hover:border-primary/40">
+      <div className="flex items-start gap-4 mb-5">
+        <span className="font-mono text-xs text-primary tracking-[0.2em] pt-1">{step}</span>
+        <div className="flex-1">
+          <div className="flex items-center gap-2">
+            <h3 className="text-lg font-semibold tracking-tight">{title}</h3>
+            {badge && (
+              <span className="rounded-full border border-border/60 px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
+                {badge}
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+        </div>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function Dropzone({
+  inputRef,
+  dragOver,
+  setDragOver,
+  onDrop,
+  onSelect,
+  loading,
+  label,
+}: {
+  inputRef: React.RefObject<HTMLInputElement>;
+  dragOver: boolean;
+  setDragOver: (v: boolean) => void;
+  onDrop: (e: React.DragEvent) => void;
+  onSelect: (f: File) => void;
+  loading: boolean;
+  label: string;
+}) {
+  return (
+    <div
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDragOver(true);
+      }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={onDrop}
+      onClick={() => inputRef.current?.click()}
+      className={`group/drop relative flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed px-6 py-12 text-center transition-all ${
+        dragOver
+          ? "border-primary bg-primary/5 scale-[1.01]"
+          : "border-border/70 hover:border-primary/60 hover:bg-primary/5"
+      }`}
+    >
+      <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary transition-transform group-hover/drop:scale-110">
+        <Upload className="h-5 w-5" />
+      </div>
+      <p className="font-medium">
+        {loading ? "Lendo arquivo..." : label}
+      </p>
+      <p className="mt-1 text-xs text-muted-foreground font-mono">
+        clique ou arraste · .xlsx .xls
+      </p>
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".xlsx,.xls"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) onSelect(f);
+        }}
+      />
+    </div>
+  );
+}
+
+function FileChip({ name, info, onRemove }: { name: string; info: string; onRemove: () => void }) {
+  return (
+    <div className="flex items-center justify-between rounded-2xl border border-primary/30 bg-primary/5 px-4 py-3">
+      <div className="flex items-center gap-3 min-w-0">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/15 text-primary shrink-0">
+          <FileSpreadsheet className="h-5 w-5" />
+        </div>
+        <div className="min-w-0">
+          <p className="font-medium truncate">{name}</p>
+          <p className="text-xs text-muted-foreground font-mono">{info}</p>
+        </div>
+      </div>
+      <Button variant="ghost" size="sm" onClick={onRemove} className="shrink-0">
+        <X className="mr-1 h-4 w-4" />
+        Remover
+      </Button>
+    </div>
+  );
+}
 
 export default Index;
