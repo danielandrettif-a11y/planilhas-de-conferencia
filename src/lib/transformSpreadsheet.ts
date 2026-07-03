@@ -75,7 +75,7 @@ function parseDescricao(desc: string): Parsed {
   }
 
   // Linha negativa relacionada — extrair número da NF
-  // Padrões: "PAGO NF - 123-...", "... NF - 4394-...", "... NF 4395 ..."
+  // 1) Padrão explícito com "NF"
   let numero: string | null = null;
   const m1 = upper.match(/NF\s*-\s*(\d+)/);
   if (m1) numero = m1[1];
@@ -83,7 +83,26 @@ function parseDescricao(desc: string): Parsed {
     const m2 = upper.match(/NF\s+(\d+)/);
     if (m2) numero = m2[1];
   }
+  // 2) Padrões de retenção comuns: "S/ 1234", "S/NF 1234", "SOBRE 1234", "REF 1234", "REF. NF 1234"
+  if (!numero) {
+    const mRet = upper.match(/(?:S\s*\/\s*(?:NF\s*)?|SOBRE\s+|REF\.?\s*(?:NF\s*)?)(\d+)/);
+    if (mRet) numero = mRet[1];
+  }
   return { isNF: false, numero, fornecedor: "" };
+}
+
+// Extrai números candidatos a NF de uma descrição, ignorando datas, percentuais e valores monetários.
+function extractCandidateNumbers(desc: string): string[] {
+  let s = desc;
+  // remove datas dd/mm/aaaa ou dd/mm/aa
+  s = s.replace(/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g, " ");
+  // remove percentuais 12% / 12,5%
+  s = s.replace(/\b\d+(?:[.,]\d+)?\s*%/g, " ");
+  // remove valores monetários (contém vírgula ou ponto decimal) ex: 1.234,56 / 123,45 / 1234.56
+  s = s.replace(/\b\d{1,3}(?:\.\d{3})+(?:,\d+)?\b/g, " ");
+  s = s.replace(/\b\d+[.,]\d+\b/g, " ");
+  const nums = s.match(/\b\d{3,}\b/g) ?? [];
+  return nums;
 }
 
 export interface TransformResult {
@@ -187,8 +206,27 @@ export function transformRows(rows: SheetRow[]): TransformResult {
     if (valor >= 0) continue;
     const parsed = parseDescricao(desc);
     if (parsed.isNF) continue;
-    if (!parsed.numero) continue;
-    const nota = byNumero.get(parsed.numero);
+    let numero = parsed.numero;
+    // 3) Fallback: procurar um único número na descrição que bata com NF conhecida
+    if (!numero) {
+      const candidates = extractCandidateNumbers(desc);
+      const matches = Array.from(new Set(candidates.filter((n) => byNumero.has(n))));
+      if (matches.length === 1) {
+        numero = matches[0];
+      } else if (matches.length > 1) {
+        // desempate por fornecedor: descrição contém parte do nome do fornecedor
+        const upperDesc = desc.toUpperCase();
+        const scored = matches.filter((n) => {
+          const forn = (byNumero.get(n)?.fornecedor ?? "").toUpperCase();
+          if (!forn) return false;
+          const firstWord = forn.split(/\s+/)[0];
+          return firstWord.length >= 3 && upperDesc.includes(firstWord);
+        });
+        if (scored.length === 1) numero = scored[0];
+      }
+    }
+    if (!numero) continue;
+    const nota = byNumero.get(numero);
     if (!nota) continue;
     nota.faltaPagar += valor; // valor é negativo, então subtrai
   }
