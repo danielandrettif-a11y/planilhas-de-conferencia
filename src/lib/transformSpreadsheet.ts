@@ -182,8 +182,16 @@ function formatInfoValue(v: unknown): string {
   return String(v).trim();
 }
 
-export function buildPreviousInfoMap(rows: SheetRow[]): Map<string, string> {
-  const map = new Map<string, string>();
+export interface PrevEntry {
+  fornecedor: string;
+  tokens: Set<string>;
+  info: string;
+}
+
+export function buildPreviousInfoMap(
+  rows: SheetRow[],
+): Map<string, PrevEntry[]> {
+  const map = new Map<string, PrevEntry[]>();
   if (rows.length === 0) return map;
   const sample = rows[0];
   const fornKey = findKey(sample, PREV_FORNECEDOR_KEYS);
@@ -196,23 +204,47 @@ export function buildPreviousInfoMap(rows: SheetRow[]): Map<string, string> {
   }
   for (const row of rows) {
     const nota = normNota(row[notaKey]);
-    const forn = normFornecedor(row[fornKey]);
+    const forn = row[fornKey];
     const info = row[infoKey];
-    if (!nota || !forn) continue;
-    if (info == null || String(info).trim() === "") continue;
-    map.set(`${nota}||${forn}`, String(info));
+    if (!nota || forn == null || String(forn).trim() === "") continue;
+    const infoStr = formatInfoValue(info);
+    if (!infoStr) continue;
+    const entry: PrevEntry = {
+      fornecedor: String(forn),
+      tokens: fornecedorTokens(forn),
+      info: infoStr,
+    };
+    const arr = map.get(nota);
+    if (arr) arr.push(entry);
+    else map.set(nota, [entry]);
   }
   return map;
 }
 
 export function applyPreviousInfo(
   notas: NotaFiscal[],
-  prevMap: Map<string, string>,
+  prevMap: Map<string, PrevEntry[]>,
 ): void {
   for (const nota of notas) {
-    const key = `${normNota(nota.notaFiscal)}||${normFornecedor(nota.fornecedor)}`;
-    const info = prevMap.get(key);
-    if (info) nota.informacoes = info;
+    const candidates = prevMap.get(normNota(nota.notaFiscal));
+    if (!candidates || candidates.length === 0) continue;
+    let chosen: PrevEntry | null = null;
+    if (candidates.length === 1) {
+      chosen = candidates[0];
+    } else {
+      const genTokens = fornecedorTokens(nota.fornecedor);
+      let bestScore = -1;
+      for (const c of candidates) {
+        const score = tokenOverlap(genTokens, c.tokens);
+        if (score > bestScore) {
+          bestScore = score;
+          chosen = c;
+        }
+      }
+      // Require at least one token overlap when there is ambiguity.
+      if (bestScore <= 0) chosen = null;
+    }
+    if (chosen) nota.informacoes = chosen.info;
   }
 }
 
