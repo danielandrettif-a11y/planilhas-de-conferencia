@@ -216,7 +216,10 @@ const Index = () => {
           </div>
           <h2 className="text-4xl sm:text-5xl font-semibold tracking-tight leading-[1.05]">
             Transforme sua planilha bruta em{" "}
-            <span className="bg-clip-text text-transparent bg-[var(--gradient-primary)]">
+            <span
+              className="bg-clip-text text-transparent"
+              style={{ backgroundImage: "var(--gradient-primary)" }}
+            >
               relatório formatado
             </span>
           </h2>
