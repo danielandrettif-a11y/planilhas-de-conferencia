@@ -10,6 +10,7 @@ import {
   buildPreviousInfoMap,
   applyPreviousInfo,
   type SheetRow,
+  type SheetInput,
 } from "@/lib/transformSpreadsheet";
 
 const ACCEPTED = [".xlsx", ".xls"];
@@ -20,30 +21,42 @@ function formatSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
+function extractConta(filename: string): string | null {
+  const base = filename.replace(/\.(xlsx|xls)$/i, "");
+  const m = base.match(/\d{3,}/);
+  return m ? m[0] : null;
+}
+
+interface RawFile {
+  file: File;
+  conta: string;
+  rows: SheetRow[];
+}
+
 const Index = () => {
-  const [file, setFile] = useState<File | null>(null);
-  const [rows, setRows] = useState<SheetRow[]>([]);
-  const [headers, setHeaders] = useState<string[]>([]);
+  const [rawFiles, setRawFiles] = useState<RawFile[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [prevFile, setPrevFile] = useState<File | null>(null);
-  const [prevRows, setPrevRows] = useState<SheetRow[]>([]);
+  const [prevSheets, setPrevSheets] = useState<Record<string, SheetRow[]>>({});
   const [prevLoading, setPrevLoading] = useState(false);
   const [prevDragOver, setPrevDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const prevInputRef = useRef<HTMLInputElement>(null);
 
-  const reset = () => {
-    setFile(null);
-    setRows([]);
-    setHeaders([]);
+  const resetAll = () => {
+    setRawFiles([]);
     if (inputRef.current) inputRef.current.value = "";
+  };
+
+  const removeRaw = (conta: string) => {
+    setRawFiles((prev) => prev.filter((r) => r.conta !== conta));
   };
 
   const resetPrev = () => {
     setPrevFile(null);
-    setPrevRows([]);
+    setPrevSheets({});
     if (prevInputRef.current) prevInputRef.current.value = "";
   };
 
@@ -61,24 +74,35 @@ const Index = () => {
     try {
       const buf = await f.arrayBuffer();
       const wb = XLSX.read(buf, { type: "array", cellDates: true });
-      const firstSheet = wb.SheetNames[0];
-      if (!firstSheet) throw new Error("Nenhuma aba encontrada");
-      const ws = wb.Sheets[firstSheet];
-      const json = XLSX.utils.sheet_to_json<SheetRow>(ws, { defval: "", raw: true });
-      // Validate columns
-      try {
-        buildPreviousInfoMap(json);
-      } catch (err) {
+      const sheets: Record<string, SheetRow[]> = {};
+      let validCount = 0;
+      let lastError: unknown = null;
+      for (const name of wb.SheetNames) {
+        const ws = wb.Sheets[name];
+        const json = XLSX.utils.sheet_to_json<SheetRow>(ws, { defval: "", raw: true });
+        if (json.length === 0) continue;
+        try {
+          buildPreviousInfoMap(json);
+          sheets[name] = json;
+          validCount++;
+        } catch (err) {
+          lastError = err;
+        }
+      }
+      if (validCount === 0) {
         toast({
           title: "Planilha do mês anterior inválida",
-          description: err instanceof Error ? err.message : "Colunas ausentes.",
+          description:
+            lastError instanceof Error
+              ? lastError.message
+              : "Nenhuma aba com as colunas FORNECEDOR, NOTA FISCAL e INFORMAÇÕES.",
           variant: "destructive",
         });
         setPrevLoading(false);
         return;
       }
       setPrevFile(f);
-      setPrevRows(json);
+      setPrevSheets(sheets);
     } catch (err) {
       console.error(err);
       toast({
@@ -91,74 +115,105 @@ const Index = () => {
     }
   }, []);
 
-  const handleFile = useCallback(async (f: File) => {
-    const lower = f.name.toLowerCase();
-    if (!ACCEPTED.some((ext) => lower.endsWith(ext))) {
-      toast({
-        title: "Arquivo inválido",
-        description: "Envie uma planilha .xlsx ou .xls exportada do Alterdata.",
-        variant: "destructive",
-      });
-      return;
-    }
-    if (f.size === 0) {
-      toast({
-        title: "Arquivo vazio",
-        description: "O arquivo enviado não contém dados.",
-        variant: "destructive",
-      });
-      return;
-    }
+  const handleFiles = useCallback(async (list: FileList | File[]) => {
+    const files = Array.from(list);
+    if (files.length === 0) return;
     setLoading(true);
     try {
-      const buf = await f.arrayBuffer();
-      const wb = XLSX.read(buf, { type: "array", cellDates: true });
-      const firstSheet = wb.SheetNames[0];
-      if (!firstSheet) throw new Error("Nenhuma aba encontrada");
-      const ws = wb.Sheets[firstSheet];
-      const json = XLSX.utils.sheet_to_json<SheetRow>(ws, { defval: "", raw: true });
-      if (json.length === 0) {
+      const parsed: RawFile[] = [];
+      const skipped: string[] = [];
+      for (const f of files) {
+        const lower = f.name.toLowerCase();
+        if (!ACCEPTED.some((ext) => lower.endsWith(ext))) {
+          skipped.push(`${f.name} (formato inválido)`);
+          continue;
+        }
+        if (f.size === 0) {
+          skipped.push(`${f.name} (vazio)`);
+          continue;
+        }
+        const conta = extractConta(f.name);
+        if (!conta) {
+          skipped.push(`${f.name} (sem código no nome — ex.: 81354.xlsx)`);
+          continue;
+        }
+        try {
+          const buf = await f.arrayBuffer();
+          const wb = XLSX.read(buf, { type: "array", cellDates: true });
+          const first = wb.SheetNames[0];
+          if (!first) {
+            skipped.push(`${f.name} (sem abas)`);
+            continue;
+          }
+          const json = XLSX.utils.sheet_to_json<SheetRow>(wb.Sheets[first], {
+            defval: "",
+            raw: true,
+          });
+          if (json.length === 0) {
+            skipped.push(`${f.name} (sem linhas)`);
+            continue;
+          }
+          parsed.push({ file: f, conta, rows: json });
+        } catch (err) {
+          console.error(err);
+          skipped.push(`${f.name} (falha ao ler)`);
+        }
+      }
+      setRawFiles((prev) => {
+        const map = new Map(prev.map((r) => [r.conta, r]));
+        const duplicates: string[] = [];
+        for (const r of parsed) {
+          if (map.has(r.conta)) duplicates.push(`${r.conta}`);
+          map.set(r.conta, r);
+        }
+        if (duplicates.length > 0) {
+          toast({
+            title: "Conta duplicada substituída",
+            description: `Contas: ${duplicates.join(", ")}`,
+          });
+        }
+        return Array.from(map.values());
+      });
+      if (skipped.length > 0) {
         toast({
-          title: "Planilha vazia",
-          description: "Não foram encontradas linhas de dados.",
+          title: "Alguns arquivos foram ignorados",
+          description: skipped.join(" · "),
           variant: "destructive",
         });
-        setLoading(false);
-        return;
       }
-      setFile(f);
-      setRows(json);
-      setHeaders(Object.keys(json[0]));
-    } catch (err) {
-      console.error(err);
-      toast({
-        title: "Falha ao ler arquivo",
-        description: "Não foi possível ler a planilha. Verifique o formato.",
-        variant: "destructive",
-      });
     } finally {
       setLoading(false);
+      if (inputRef.current) inputRef.current.value = "";
     }
   }, []);
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    const f = e.dataTransfer.files?.[0];
-    if (f) handleFile(f);
+    if (e.dataTransfer.files?.length) handleFiles(e.dataTransfer.files);
   };
 
   const onGenerate = async () => {
-    if (rows.length === 0) return;
+    if (rawFiles.length === 0) return;
     setGenerating(true);
     try {
-      const result = transformRows(rows);
-      if (prevRows.length > 0) {
-        const map = buildPreviousInfoMap(prevRows);
-        applyPreviousInfo(result.notas, map);
+      const sheets: SheetInput[] = [];
+      let totalNotas = 0;
+      for (const raw of rawFiles) {
+        const result = transformRows(raw.rows);
+        const prev = prevSheets[raw.conta];
+        if (prev && prev.length > 0) {
+          const map = buildPreviousInfoMap(prev);
+          applyPreviousInfo(result.notas, map);
+        }
+        sheets.push({ conta: raw.conta, result });
+        totalNotas += result.notas.length;
       }
-      const blob = await buildXlsx(result);
-      const base = file?.name.replace(/\.(xlsx|xls)$/i, "") ?? "planilha";
+      const blob = await buildXlsx(sheets);
+      const base =
+        rawFiles.length === 1
+          ? rawFiles[0].file.name.replace(/\.(xlsx|xls)$/i, "")
+          : "planilhas";
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -169,7 +224,7 @@ const Index = () => {
       URL.revokeObjectURL(url);
       toast({
         title: "Planilha gerada",
-        description: `${result.notas.length} nota(s) fiscal(is) exportada(s). Nenhum dado foi armazenado.`,
+        description: `${sheets.length} aba(s) · ${totalNotas} nota(s) exportada(s). Nenhum dado foi armazenado.`,
       });
     } catch (err) {
       console.error(err);
@@ -238,33 +293,52 @@ const Index = () => {
         <div className="grid gap-6 lg:grid-cols-2">
         <StepCard
           step="01"
-          title="Planilha bruta do mês atual"
-          description="Envie a planilha exportada do Alterdata."
+          title="Planilhas brutas do mês atual"
+          description="Envie uma ou mais planilhas. O nome do arquivo deve conter o código da conta (ex.: 81354.xlsx). Cada arquivo vira uma aba na planilha final."
         >
-          {!file ? (
+          <div className="space-y-3">
             <Dropzone
               inputRef={inputRef}
               dragOver={dragOver}
               setDragOver={setDragOver}
               onDrop={onDrop}
-              onSelect={handleFile}
+              onSelect={handleFiles}
               loading={loading}
-              label="Solte o arquivo aqui"
+              multiple
+              label={
+                rawFiles.length > 0
+                  ? "Adicionar mais arquivos"
+                  : "Solte os arquivos aqui"
+              }
             />
-          ) : (
-            <FileChip
-              name={file.name}
-              info={`${formatSize(file.size)} · ${rows.length} linhas · ${headers.length} colunas`}
-              onRemove={reset}
-            />
-          )}
+            {rawFiles.length > 0 && (
+              <div className="space-y-2">
+                {rawFiles.map((r) => (
+                  <FileChip
+                    key={r.conta}
+                    name={r.file.name}
+                    info={`aba ${r.conta} · ${formatSize(r.file.size)} · ${r.rows.length} linhas`}
+                    onRemove={() => removeRaw(r.conta)}
+                  />
+                ))}
+                {rawFiles.length > 1 && (
+                  <button
+                    onClick={resetAll}
+                    className="text-xs text-muted-foreground hover:text-foreground font-mono"
+                  >
+                    limpar todos
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         </StepCard>
 
         <StepCard
           step="02"
           title="Planilha do mês anterior"
           badge="opcional"
-          description="Importa a coluna INFORMAÇÕES da planilha final do mês anterior."
+          description="Um único arquivo com uma aba por conta (mesmo código do mês atual). Importa a coluna INFORMAÇÕES."
         >
           {!prevFile ? (
             <Dropzone
@@ -277,27 +351,32 @@ const Index = () => {
                 const f = e.dataTransfer.files?.[0];
                 if (f) handlePrevFile(f);
               }}
-              onSelect={handlePrevFile}
+              onSelect={(fs) => {
+                const f = Array.isArray(fs) ? fs[0] : fs[0];
+                if (f) handlePrevFile(f);
+              }}
               loading={prevLoading}
               label="Solte a planilha do mês anterior aqui"
             />
           ) : (
             <FileChip
               name={prevFile.name}
-              info={`${formatSize(prevFile.size)} · ${prevRows.length} linhas`}
+              info={`${formatSize(prevFile.size)} · ${Object.keys(prevSheets).length} aba(s): ${Object.keys(prevSheets).join(", ")}`}
               onRemove={resetPrev}
             />
           )}
         </StepCard>
         </div>
 
-        {rows.length > 0 && (
+        {rawFiles.length > 0 && (
           <div className="relative overflow-hidden rounded-3xl border border-primary/30 bg-[var(--gradient-surface)] p-8 shadow-[var(--shadow-soft)]">
             <div className="absolute -top-24 -right-24 h-64 w-64 rounded-full bg-primary/20 blur-3xl" />
             <div className="relative flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
               <div className="space-y-1">
                 <p className="text-xs uppercase tracking-[0.25em] text-primary font-mono">03 · finalizar</p>
-                <h3 className="text-2xl font-semibold tracking-tight">Gerar planilha formatada</h3>
+                <h3 className="text-2xl font-semibold tracking-tight">
+                  Gerar planilha ({rawFiles.length} aba{rawFiles.length > 1 ? "s" : ""})
+                </h3>
                 <p className="text-sm text-muted-foreground max-w-md">
                   {prevFile
                     ? "A coluna INFORMAÇÕES será preenchida com base na planilha anterior."
@@ -371,14 +450,16 @@ function Dropzone({
   onSelect,
   loading,
   label,
+  multiple,
 }: {
   inputRef: React.RefObject<HTMLInputElement>;
   dragOver: boolean;
   setDragOver: (v: boolean) => void;
   onDrop: (e: React.DragEvent) => void;
-  onSelect: (f: File) => void;
+  onSelect: (files: FileList | File[]) => void;
   loading: boolean;
   label: string;
+  multiple?: boolean;
 }) {
   return (
     <div
@@ -402,16 +483,16 @@ function Dropzone({
         {loading ? "Lendo arquivo..." : label}
       </p>
       <p className="mt-1 text-xs text-muted-foreground font-mono">
-        clique ou arraste · .xlsx .xls
+        clique ou arraste · .xlsx .xls{multiple ? " · múltiplos" : ""}
       </p>
       <input
         ref={inputRef}
         type="file"
         accept=".xlsx,.xls"
+        multiple={multiple}
         className="hidden"
         onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) onSelect(f);
+          if (e.target.files?.length) onSelect(e.target.files);
         }}
       />
     </div>
