@@ -270,7 +270,11 @@ export function transformRows(rows: SheetRow[]): TransformResult {
     if (!desc.trim()) continue;
     const parsed = parseDescricao(desc);
     if (!parsed.isNF) continue;
-    const valor = Math.abs(toNumber(row[valorKey]));
+    const rawValor = toNumber(row[valorKey]);
+    // Linha "VALOR NF" com valor negativo é devolução/abatimento — não é NF nova.
+    // Será tratada na segunda passagem como retenção.
+    if (rawValor < 0) continue;
+    const valor = Math.abs(rawValor);
     const nota: NotaFiscal = {
       data: (row[dataKey] as Date | string | number | null) ?? null,
       fornecedor: parsed.fornecedor,
@@ -294,8 +298,10 @@ export function transformRows(rows: SheetRow[]): TransformResult {
     const valor = toNumber(row[valorKey]);
     if (valor >= 0) continue;
     const parsed = parseDescricao(desc);
-    if (parsed.isNF) continue;
     let numero = parsed.numero;
+    // Se for uma linha "VALOR NF" negativa (devolução), o primeiro número é o da
+    // própria devolução — ignoramos e procuramos a NF referenciada no texto.
+    if (parsed.isNF) numero = null;
     // 3) Fallback: procurar um único número na descrição que bata com NF conhecida
     if (!numero) {
       const candidates = extractCandidateNumbers(desc);
