@@ -1,39 +1,39 @@
-## Diagnóstico
+## Plano
 
-Comparei o `81354.xls` que você mandou com o que o site gera.
+Corrigir a lógica de devolução para que a linha negativa como:
 
-- Saldo final na planilha bruta (última linha, coluna `Saldo`): **R$ 3.083.760,89**
-- Total gerado hoje pelo site (soma de FALTA PAGAR): **R$ 3.094.136,89** (após aplicar retenções negativas)
-- Diferença: **R$ 10.376,00**
+`VALOR NF 494062 ... REF DEVOLUCAO NF 363720 ...`
 
-A causa é uma única linha no arquivo bruto:
+não use a NF `494062` como referência, e sim a NF original indicada depois de `REF DEVOLUCAO NF`, neste caso `363720`.
 
-```
-Linha 12 — Valor: -10.376,00
-Descrição: "VALOR NF 494062 CRISTALIA PROD. QUIM. FARMACEUTICOS LTDA
-            REF DEVOLUCAO NF 363720 EMITIDA 26/04/2024."
-```
+## O que vou alterar
 
-É uma **devolução**: a linha começa com "VALOR NF" (então nosso parser trata como nota fiscal nova) **mas o valor é negativo** e o texto diz "REF DEVOLUCAO NF 363720" — na verdade é um abatimento da NF 363720.
+1. **Detectar devolução explicitamente**
+   - Criar uma extração específica para padrões como:
+     - `REF DEVOLUCAO NF 363720`
+     - `REF. DEVOLUÇÃO NF 363720`
+     - variações sem acento/sem ponto.
 
-Hoje o código faz `Math.abs(row.Valor)` para NFs, então essa linha vira uma nota positiva de R$ 10.376,00 em vez de abater R$ 10.376,00 da NF 363720. Isso infla o total em 2 × 10.376 = R$ 20.752, mas como a NF 363720 já existe e recebeu 0 de abatimento, o resultado líquido no total é +10.376 acima do saldo real.
+2. **Priorizar a NF original da devolução**
+   - Na segunda passagem dos lançamentos negativos, antes do fallback genérico de números, verificar se a descrição contém `REF DEVOLUCAO NF <numero>`.
+   - Se encontrar, usar esse número diretamente para localizar a NF original.
 
-## Correção
+3. **Manter a devolução fora das NFs novas**
+   - A linha `VALOR NF 494062 ...` com valor negativo continuará sendo ignorada na primeira passagem, para não criar uma aba/linha fantasma de NF positiva.
 
-Em `src/lib/transformSpreadsheet.ts`, mudar a regra: linha `VALOR NF` com valor **negativo** não vira uma nota nova — é tratada como retenção/devolução, exatamente como as outras linhas negativas.
+4. **Abater do lançamento correto**
+   - Para o exemplo informado, a linha negativa de `494062` vai abater o valor da NF `363720`:
+     - Original: `VALOR NF 363720-CRISTALIA...`
+     - Devolução: `VALOR NF 494062 ... REF DEVOLUCAO NF 363720...`
 
-1. Na primeira passagem (coleta de NFs), pular quando `parsed.isNF && valor < 0`.
-2. Na segunda passagem (abater negativos), remover o `if (parsed.isNF) continue;` — ou melhor, deixar essa linha entrar no fluxo de match por número de NF.
-3. O parser já sabe extrair o número referenciado: para "VALOR NF 494062 ... REF DEVOLUCAO NF 363720", o `extractCandidateNumbers` retorna os dois. Como só a NF 363720 existe no `byNumero` (494062 nunca foi cadastrada porque agora ignoramos), o filtro `matches.filter(n => byNumero.has(n))` fica com só uma → match único → abate corretamente.
-4. Caso a NF referenciada não exista no mês, a linha é ignorada (mesmo comportamento das outras retenções órfãs de hoje).
+5. **Validar o caso da 81354**
+   - Conferir que o total gerado passe a bater com o saldo esperado: `R$ 3.083.760,89`, não `R$ 3.153.635,02`.
 
-## Resultado esperado
+## Arquivo afetado
 
-- Total FALTA PAGAR passa a bater com o Saldo da planilha bruta (R$ 3.083.760,89 no caso do 81354).
-- Nenhuma "NF fantasma" de valor R$ 10.376 aparece na saída.
-- Comportamento das demais linhas continua idêntico.
+- `src/lib/transformSpreadsheet.ts`
 
 ## Fora do escopo
 
-- Não muda UI, layout, nem lógica de múltiplas abas / mês anterior.
-- Não altera a coluna `INFORMAÇÕES`.
+- Não vou mudar layout, uploads, múltiplas abas ou a coluna `INFORMAÇÕES`.
+- Não vou salvar dados das planilhas enviadas.

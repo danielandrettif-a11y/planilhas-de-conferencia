@@ -115,6 +115,16 @@ function extractCandidateNumbers(desc: string): string[] {
   return nums;
 }
 
+function removeAccents(value: string): string {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function extractDevolucaoRefNumero(desc: string): string | null {
+  const normalized = removeAccents(desc).toUpperCase();
+  const match = normalized.match(/\bREF\.?\s+DEVOLUCAO\s+NF\s*-?\s*(\d+)\b/);
+  return match?.[1] ?? null;
+}
+
 export interface TransformResult {
   notas: NotaFiscal[];
 }
@@ -298,10 +308,10 @@ export function transformRows(rows: SheetRow[]): TransformResult {
     const valor = toNumber(row[valorKey]);
     if (valor >= 0) continue;
     const parsed = parseDescricao(desc);
-    let numero = parsed.numero;
+    let numero = extractDevolucaoRefNumero(desc) ?? parsed.numero;
     // Se for uma linha "VALOR NF" negativa (devolução), o primeiro número é o da
     // própria devolução — ignoramos e procuramos a NF referenciada no texto.
-    if (parsed.isNF) numero = null;
+    if (parsed.isNF && !extractDevolucaoRefNumero(desc)) numero = null;
     // 3) Fallback: procurar um único número na descrição que bata com NF conhecida
     if (!numero) {
       const candidates = extractCandidateNumbers(desc);
