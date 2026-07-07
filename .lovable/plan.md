@@ -1,41 +1,39 @@
-## Objetivo
+## Diagnóstico
 
-Permitir enviar **várias planilhas brutas** no mesmo slot do mês atual. O nome de cada arquivo (ex.: `81354.xlsx`, `81361.xlsx`) vira o nome da aba no arquivo gerado, seguindo o mesmo modelo da planilha do mês anterior (que já tem uma aba por conta).
+Comparei o `81354.xls` que você mandou com o que o site gera.
 
-## Comportamento novo
+- Saldo final na planilha bruta (última linha, coluna `Saldo`): **R$ 3.083.760,89**
+- Total gerado hoje pelo site (soma de FALTA PAGAR): **R$ 3.094.136,89** (após aplicar retenções negativas)
+- Diferença: **R$ 10.376,00**
 
-**Slot "Mês atual" (múltiplos arquivos):**
-- Aceitar N arquivos `.xlsx` de uma vez.
-- Para cada arquivo, extrair o código da conta do **nome do arquivo** (primeira sequência de dígitos, ex.: `81354` em `81354.xlsx`, `Conta_81354_abril.xlsx`, etc.).
-- Se algum arquivo não tiver dígitos no nome, avisar o usuário e pedir para renomear.
-- Se dois arquivos gerarem o mesmo código, avisar (duplicata).
-- A UI lista os arquivos carregados com o código detectado ao lado — o usuário confere antes de gerar.
+A causa é uma única linha no arquivo bruto:
 
-**Slot "Mês anterior" (opcional, continua 1 arquivo):**
-- Continua sendo um único `.xlsx` com várias abas (uma por conta), como o `IMNEC_Mês_04-2026_ok.xlsx` que você enviou.
-- Ao aplicar `INFORMAÇÕES`, para cada conta buscamos os dados na aba com o **mesmo código** no arquivo anterior. Se a aba não existir, aquela conta sai sem `INFORMAÇÕES` (comportamento atual, só que por aba).
+```
+Linha 12 — Valor: -10.376,00
+Descrição: "VALOR NF 494062 CRISTALIA PROD. QUIM. FARMACEUTICOS LTDA
+            REF DEVOLUCAO NF 363720 EMITIDA 26/04/2024."
+```
 
-**Geração:**
-- O arquivo final passa a ter **uma aba por conta**, nomeada com o código (`81354`, `81361`, ...), cada uma no mesmo formato/estilo da aba única de hoje (cabeçalho, cores, linha de TOTAL, etc.).
-- Se só um arquivo bruto for enviado, o resultado é 1 aba — comportamento equivalente ao atual.
+É uma **devolução**: a linha começa com "VALOR NF" (então nosso parser trata como nota fiscal nova) **mas o valor é negativo** e o texto diz "REF DEVOLUCAO NF 363720" — na verdade é um abatimento da NF 363720.
 
-## Arquivos a mudar
+Hoje o código faz `Math.abs(row.Valor)` para NFs, então essa linha vira uma nota positiva de R$ 10.376,00 em vez de abater R$ 10.376,00 da NF 363720. Isso infla o total em 2 × 10.376 = R$ 20.752, mas como a NF 363720 já existe e recebeu 0 de abatimento, o resultado líquido no total é +10.376 acima do saldo real.
 
-- `src/lib/transformSpreadsheet.ts`
-  - `buildXlsx` passa a aceitar `Array<{ conta: string; result: TransformResult }>` e cria uma aba por item, reusando o estilo atual.
-  - `buildPreviousInfoMap` passa a aceitar todas as abas do workbook anterior e retornar `Map<contaCode, Map<nota, PrevEntry[]>>`.
-- `src/pages/Index.tsx`
-  - Input do mês atual vira `multiple`; state passa a ser `Array<{ file, conta, rows }>`.
-  - UI lista arquivos com o código detectado + botão de remover individual.
-  - Validação: pelo menos 1 arquivo, todo arquivo com código válido, sem duplicatas.
-  - `onGenerate` roda `transformRows` por arquivo, casa com a aba correspondente do mês anterior (se houver) e chama o novo `buildXlsx` com o array.
+## Correção
+
+Em `src/lib/transformSpreadsheet.ts`, mudar a regra: linha `VALOR NF` com valor **negativo** não vira uma nota nova — é tratada como retenção/devolução, exatamente como as outras linhas negativas.
+
+1. Na primeira passagem (coleta de NFs), pular quando `parsed.isNF && valor < 0`.
+2. Na segunda passagem (abater negativos), remover o `if (parsed.isNF) continue;` — ou melhor, deixar essa linha entrar no fluxo de match por número de NF.
+3. O parser já sabe extrair o número referenciado: para "VALOR NF 494062 ... REF DEVOLUCAO NF 363720", o `extractCandidateNumbers` retorna os dois. Como só a NF 363720 existe no `byNumero` (494062 nunca foi cadastrada porque agora ignoramos), o filtro `matches.filter(n => byNumero.has(n))` fica com só uma → match único → abate corretamente.
+4. Caso a NF referenciada não exista no mês, a linha é ignorada (mesmo comportamento das outras retenções órfãs de hoje).
+
+## Resultado esperado
+
+- Total FALTA PAGAR passa a bater com o Saldo da planilha bruta (R$ 3.083.760,89 no caso do 81354).
+- Nenhuma "NF fantasma" de valor R$ 10.376 aparece na saída.
+- Comportamento das demais linhas continua idêntico.
 
 ## Fora do escopo
 
-- Não muda a lógica de parsing de linhas (`VALOR NF`, retenções, etc.).
-- Não muda o slot do mês anterior (continua 1 arquivo com N abas).
-- Não muda o visual geral do site, só o conteúdo do card 01 para suportar múltiplos arquivos.
-
-## Dúvida rápida
-
-Confirma que o nome do arquivo bruto sempre vai conter o código da conta em dígitos (ex.: `81354.xlsx` ou `Conta 81354 - abril.xlsx`)? Se preferir outro esquema (ex.: um campo de texto ao lado de cada arquivo para digitar o código manualmente), me diz que ajusto o plano.
+- Não muda UI, layout, nem lógica de múltiplas abas / mês anterior.
+- Não altera a coluna `INFORMAÇÕES`.
