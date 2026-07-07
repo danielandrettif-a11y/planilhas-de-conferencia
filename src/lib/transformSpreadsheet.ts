@@ -125,6 +125,44 @@ function extractDevolucaoRefNumero(desc: string): string | null {
   return match?.[1] ?? null;
 }
 
+function uniqueKnownMatches(matches: string[], byNumero: Map<string, NotaFiscal>): string[] {
+  return Array.from(new Set(matches.filter((n) => byNumero.has(n))));
+}
+
+function removeOneDigitVariants(numero: string): string[] {
+  const variants: string[] = [];
+  for (let i = 0; i < numero.length; i++) {
+    variants.push(numero.slice(0, i) + numero.slice(i + 1));
+  }
+  return variants;
+}
+
+function findSafeNumeroVariant(
+  numero: string | null,
+  desc: string,
+  byNumero: Map<string, NotaFiscal>,
+): string | null {
+  if (!numero || byNumero.has(numero)) return numero;
+
+  const matches: string[] = [];
+  for (const known of byNumero.keys()) {
+    const suffix = numero.slice(known.length);
+    if (numero.startsWith(known) && /^0+\d*$/.test(suffix)) {
+      matches.push(known);
+    }
+  }
+  matches.push(...uniqueKnownMatches(removeOneDigitVariants(numero), byNumero));
+
+  const descTokens = fornecedorTokens(desc);
+  const supplierMatches = Array.from(new Set(matches)).filter((n) => {
+    const nota = byNumero.get(n);
+    if (!nota) return false;
+    return tokenOverlap(descTokens, fornecedorTokens(nota.fornecedor)) > 0;
+  });
+
+  return supplierMatches.length === 1 ? supplierMatches[0] : null;
+}
+
 export interface TransformResult {
   notas: NotaFiscal[];
 }
@@ -330,6 +368,7 @@ export function transformRows(rows: SheetRow[]): TransformResult {
         if (scored.length === 1) numero = scored[0];
       }
     }
+    numero = findSafeNumeroVariant(numero, desc, byNumero);
     if (!numero) continue;
     const nota = byNumero.get(numero);
     if (!nota) continue;
