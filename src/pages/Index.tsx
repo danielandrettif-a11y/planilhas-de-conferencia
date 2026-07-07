@@ -209,6 +209,16 @@ const Index = () => {
         sheets.push({ conta: raw.conta, result });
         totalNotas += result.notas.length;
       }
+      sheets.sort((a, b) => {
+        const na = parseInt(String(a.conta).match(/\d+/)?.[0] ?? "", 10);
+        const nb = parseInt(String(b.conta).match(/\d+/)?.[0] ?? "", 10);
+        const aNum = Number.isFinite(na);
+        const bNum = Number.isFinite(nb);
+        if (aNum && bNum) return na - nb;
+        if (aNum) return -1;
+        if (bNum) return 1;
+        return String(a.conta).localeCompare(String(b.conta));
+      });
       const blob = await buildXlsx(sheets);
       const base =
         rawFiles.length === 1
