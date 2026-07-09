@@ -170,7 +170,7 @@ export interface TransformResult {
 // ============ Previous month lookup ============
 
 const PREV_FORNECEDOR_KEYS = ["FORNECEDOR", "Fornecedor"];
-const PREV_NOTA_KEYS = ["NOTA FISCAL", "Nota Fiscal", "NotaFiscal", "NF"];
+const PREV_NOTA_KEYS = ["NOTA FISCAL", "Nota Fiscal", "NotaFiscal", "NF", "N.F.", "N F", "Nº NF", "NUMERO NF", "NÚMERO NF", "Nota"];
 const PREV_INFO_KEYS = ["INFORMAÇÕES", "INFORMACOES", "Informações", "Informacoes"];
 
 function normNota(v: unknown): string {
