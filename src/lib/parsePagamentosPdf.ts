@@ -6,7 +6,6 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = PdfWorker as string;
 export interface PagamentoRow {
   numero: string;
   fornecedor: string;
-  vencimento: Date | null;
   valorTitulo: number;
   valorAberto: number;
   dataBaixa: Date | null;
@@ -35,8 +34,6 @@ interface TextItem {
 interface Columns {
   numero: [number, number];
   titulo: [number, number];
-  emissao: [number, number];
-  vencimento: [number, number];
   valorTitulo: [number, number];
   valorAberto: [number, number];
   dataBaixa: [number, number];
@@ -70,19 +67,15 @@ function detectColumns(lines: TextItem[][]): Columns | null {
     const text = line.map((i) => i.str).join(" ").toLowerCase();
     if (
       text.includes("número título") &&
-      text.includes("título") &&
-      text.includes("emissão") &&
-      text.includes("vencimento") &&
-      text.includes("valor")
+      text.includes("valor") &&
+      text.includes("baixa")
     ) {
-      // Find x-positions of each column header token.
-      const find = (needle: string): number | null => {
+      const xNumero = (() => {
         for (const it of line) {
-          if (it.str.toLowerCase().includes(needle)) return it.x;
+          if (it.str.toLowerCase().includes("número")) return it.x;
         }
         return null;
-      };
-      const xNumero = find("número");
+      })();
       // "Título" appears twice; second occurrence after "Número título"
       let xTitulo: number | null = null;
       let seenNumero = false;
@@ -92,14 +85,6 @@ function detectColumns(lines: TextItem[][]): Columns | null {
         else if (seenNumero && s.includes("título") && !s.includes("número")) {
           xTitulo = it.x;
           break;
-        }
-      }
-      const xEmissao = find("emissão");
-      // Two "vencimento" - pick the one that is not "data vencimen(to)"
-      let xVenc: number | null = null;
-      for (const it of line) {
-        if (it.str.toLowerCase().includes("vencimento")) {
-          xVenc = it.x;
         }
       }
       // Values
@@ -114,13 +99,17 @@ function detectColumns(lines: TextItem[][]): Columns | null {
           seenValor++;
         }
       }
-      const xBaixa = find("baixa");
+      let xBaixa: number | null = null;
+      for (const it of line) {
+        if (it.str.toLowerCase().includes("baixa")) {
+          xBaixa = it.x;
+          break;
+        }
+      }
 
       if (
         xNumero == null ||
         xTitulo == null ||
-        xEmissao == null ||
-        xVenc == null ||
         xValorTitulo == null ||
         xValorAberto == null ||
         xBaixa == null
@@ -129,9 +118,7 @@ function detectColumns(lines: TextItem[][]): Columns | null {
 
       const cols: Columns = {
         numero: [xNumero - 5, xTitulo - 2],
-        titulo: [xTitulo - 2, xEmissao - 5],
-        emissao: [xEmissao - 5, xVenc - 5],
-        vencimento: [xVenc - 5, xValorTitulo - 5],
+        titulo: [xTitulo - 2, xValorTitulo - 5],
         valorTitulo: [xValorTitulo - 5, xValorAberto - 5],
         valorAberto: [xValorAberto - 5, xBaixa - 5],
         dataBaixa: [xBaixa - 5, 10_000],
@@ -146,6 +133,7 @@ export async function parsePagamentosPdf(file: File): Promise<PagamentoRow[]> {
   const buf = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
   const rows: PagamentoRow[] = [];
+  let pagesWithHeader = 0;
 
   for (let p = 1; p <= pdf.numPages; p++) {
     const page = await pdf.getPage(p);
@@ -166,7 +154,11 @@ export async function parsePagamentosPdf(file: File): Promise<PagamentoRow[]> {
     }
     const lines = groupByLine(items);
     const cols = detectColumns(lines);
-    if (!cols) continue;
+    if (!cols) {
+      console.info(`[pdf] página ${p}: cabeçalho não detectado`);
+      continue;
+    }
+    pagesWithHeader++;
 
     // Find header y so data lines are below it.
     let headerY = Infinity;
@@ -182,7 +174,6 @@ export async function parsePagamentosPdf(file: File): Promise<PagamentoRow[]> {
       if (line[0].y >= headerY) continue;
       const numeroRaw = joinInRange(line, cols.numero);
       const titulo = joinInRange(line, cols.titulo);
-      const vencStr = joinInRange(line, cols.vencimento);
       const valorTituloStr = joinInRange(line, cols.valorTitulo);
       const valorAbertoStr = joinInRange(line, cols.valorAberto);
       const baixaStr = joinInRange(line, cols.dataBaixa);
@@ -190,9 +181,9 @@ export async function parsePagamentosPdf(file: File): Promise<PagamentoRow[]> {
       if (!numeroRaw || !titulo) continue;
       // Skip lines that look like filters/footers
       if (/filtro/i.test(numeroRaw + " " + titulo)) continue;
-      // Vencimento must be a date
-      const venc = parseBrDate(vencStr);
-      if (!venc) continue;
+      // Require at least 3 digits in the número
+      const digits = numeroRaw.replace(/\D+/g, "");
+      if (digits.length < 3) continue;
 
       const dataBaixa = parseBrDate(baixaStr);
       const valorTitulo = parseBrNumber(valorTituloStr);
@@ -201,7 +192,6 @@ export async function parsePagamentosPdf(file: File): Promise<PagamentoRow[]> {
       rows.push({
         numero: numeroRaw,
         fornecedor: titulo,
-        vencimento: venc,
         valorTitulo,
         valorAberto,
         dataBaixa,
@@ -209,5 +199,9 @@ export async function parsePagamentosPdf(file: File): Promise<PagamentoRow[]> {
     }
   }
 
+  console.info(
+    `[pdf] ${pdf.numPages} página(s), header em ${pagesWithHeader}, ${rows.length} linha(s) extraída(s)`,
+  );
+  if (rows.length > 0) console.info("[pdf] amostra:", rows.slice(0, 3));
   return rows;
 }
