@@ -201,6 +201,14 @@ function fornecedorTokens(v: unknown): Set<string> {
   const stop = new Set([
     "ltda", "me", "epp", "sa", "s", "a", "eireli", "cia", "e", "de", "da", "do",
     "das", "dos", "the", "com",
+    // Termos genéricos que causam falsos matches entre fornecedores distintos.
+    "servicos", "servico", "servicoss", "medicos", "medico", "medica", "medicas",
+    "comercio", "comercial", "industria", "industrial", "produtos", "produto",
+    "distribuidora", "distribuidor", "transportes", "transporte", "alimentos",
+    "brasil", "brasileira", "nacional", "importacao", "exportacao", "solucoes",
+    "tecnologia", "sistemas", "engenharia", "construcao", "hospitalar",
+    "hospital", "clinica", "clinicas", "diagnostico", "diagnosticos",
+    "farmaceutica", "farmaceuticos", "quimica", "quimicos", "informatica",
   ]);
   return new Set(
     normFornecedor(v)
