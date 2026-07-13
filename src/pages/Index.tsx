@@ -13,6 +13,13 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "@/hooks/use-toast";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import {
@@ -46,7 +53,33 @@ interface RawFile {
   rows: SheetRow[];
 }
 
-type StepId = 1 | 2 | 3 | 4;
+type StepId = 1 | 2 | 3 | 4 | 5;
+
+const MESES_NOMES = [
+  "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+  "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+];
+
+function buildMesOptions(): { value: string; label: string }[] {
+  const now = new Date();
+  const out: { value: string; label: string }[] = [];
+  for (let y = now.getFullYear() - 1; y <= now.getFullYear() + 1; y++) {
+    for (let m = 1; m <= 12; m++) {
+      out.push({
+        value: `${y}-${String(m).padStart(2, "0")}`,
+        label: `${MESES_NOMES[m - 1]}/${y}`,
+      });
+    }
+  }
+  return out;
+}
+
+const MES_OPTIONS = buildMesOptions();
+
+function defaultMes(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
 
 const Index = () => {
   const [rawFiles, setRawFiles] = useState<RawFile[]>([]);
@@ -64,6 +97,7 @@ const Index = () => {
   const [pdfDragOver, setPdfDragOver] = useState(false);
   const [pdfSkipped, setPdfSkipped] = useState(false);
   const [step, setStep] = useState<StepId>(1);
+  const [mesConferencia, setMesConferencia] = useState<string>(defaultMes());
   const inputRef = useRef<HTMLInputElement>(null);
   const prevInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
@@ -90,8 +124,9 @@ const Index = () => {
   };
 
   const step1Done = prevFile !== null || prevSkipped;
-  const step2Done = rawFiles.length > 0;
-  const step3Done = pdfFile !== null || pdfSkipped;
+  const step2Done = !!mesConferencia;
+  const step3Done = rawFiles.length > 0;
+  const step4Done = pdfFile !== null || pdfSkipped;
 
   const handlePrevFile = useCallback(async (f: File) => {
     const lower = f.name.toLowerCase();
@@ -276,7 +311,10 @@ const Index = () => {
           applyPreviousInfo(result.notas, map);
         }
         if (pdfRows.length > 0) {
-          applyPagamentosPdf(result.notas, pdfRows);
+          const [ay, am] = mesConferencia.split("-").map(Number);
+          applyPagamentosPdf(result.notas, pdfRows, {
+            mesConferencia: { ano: ay, mes: am },
+          });
         }
         sheets.push({ conta: raw.conta, result });
         totalNotas += result.notas.length;
@@ -377,7 +415,7 @@ const Index = () => {
         <Stepper
           current={step}
           setStep={setStep}
-          done={{ 1: step1Done, 2: step2Done, 3: step3Done }}
+          done={{ 1: step1Done, 2: step2Done, 3: step3Done, 4: step4Done }}
         />
 
         {step === 1 && (
@@ -448,6 +486,37 @@ const Index = () => {
         {step === 2 && (
           <StepCard
             step="02"
+            title="Mês de conferência"
+            description="Selecione o mês que você está conferindo. Datas de pagamento em meses anteriores ou no próprio mês selecionado serão omitidas da coluna INFORMAÇÕES (exceto pagamentos no último dia do mês, que ficam com aviso)."
+          >
+            <div className="space-y-4">
+              <Select value={mesConferencia} onValueChange={setMesConferencia}>
+                <SelectTrigger className="w-full sm:w-64">
+                  <SelectValue placeholder="Selecione o mês" />
+                </SelectTrigger>
+                <SelectContent className="max-h-72">
+                  {MES_OPTIONS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <div className="flex justify-between">
+                <Button variant="ghost" onClick={() => goNext(1)}>Voltar</Button>
+                <Button
+                  onClick={() => goNext(3)}
+                  disabled={!step2Done}
+                  className="bg-primary text-primary-foreground hover:bg-primary/90"
+                >
+                  Continuar
+                </Button>
+              </div>
+            </div>
+          </StepCard>
+        )}
+
+        {step === 3 && (
+          <StepCard
+            step="03"
             title="Planilhas brutas do mês atual"
             description="Envie uma ou mais planilhas. O nome do arquivo deve conter o código da conta (ex.: 81354.xlsx). Cada arquivo vira uma aba na planilha final."
           >
@@ -487,10 +556,10 @@ const Index = () => {
                 </div>
               )}
               <div className="flex justify-between">
-                <Button variant="ghost" onClick={() => goNext(1)}>Voltar</Button>
+                <Button variant="ghost" onClick={() => goNext(2)}>Voltar</Button>
                 <Button
-                  onClick={() => goNext(3)}
-                  disabled={!step2Done}
+                  onClick={() => goNext(4)}
+                  disabled={!step3Done}
                   className="bg-primary text-primary-foreground hover:bg-primary/90"
                 >
                   Continuar
@@ -500,9 +569,9 @@ const Index = () => {
           </StepCard>
         )}
 
-        {step === 3 && (
+        {step === 4 && (
           <StepCard
-            step="03"
+            step="04"
             title="PDF de pagamentos"
             badge="opcional"
             description="Relatório em PDF com todos os pagamentos do mês. Usado para preencher a coluna INFORMAÇÕES com as parcelas em aberto."
@@ -555,10 +624,10 @@ const Index = () => {
               </label>
 
               <div className="flex justify-between">
-                <Button variant="ghost" onClick={() => goNext(2)}>Voltar</Button>
+                <Button variant="ghost" onClick={() => goNext(3)}>Voltar</Button>
                 <Button
-                  onClick={() => goNext(4)}
-                  disabled={!step3Done}
+                  onClick={() => goNext(5)}
+                  disabled={!step4Done}
                   className="bg-primary text-primary-foreground hover:bg-primary/90"
                 >
                   Continuar
@@ -568,23 +637,24 @@ const Index = () => {
           </StepCard>
         )}
 
-        {step === 4 && (
+        {step === 5 && (
           <div className="relative overflow-hidden rounded-3xl border border-primary/30 bg-[var(--gradient-surface)] p-8 shadow-[var(--shadow-soft)]">
             <div className="absolute -top-24 -right-24 h-64 w-64 rounded-full bg-primary/20 blur-3xl" />
             <div className="relative space-y-6">
               <div className="space-y-1">
-                <p className="text-xs uppercase tracking-[0.25em] text-primary font-mono">04 · finalizar</p>
+                <p className="text-xs uppercase tracking-[0.25em] text-primary font-mono">05 · finalizar</p>
                 <h3 className="text-2xl font-semibold tracking-tight">
                   Gerar planilha ({rawFiles.length} aba{rawFiles.length > 1 ? "s" : ""})
                 </h3>
               </div>
               <ul className="space-y-2 text-sm">
                 <SummaryRow ok={prevFile !== null} label={prevFile ? `Mês anterior: ${Object.keys(prevSheets).length} aba(s)` : "Mês anterior: —"} />
+                <SummaryRow ok={!!mesConferencia} label={`Mês de conferência: ${MES_OPTIONS.find((o) => o.value === mesConferencia)?.label ?? "—"}`} />
                 <SummaryRow ok={rawFiles.length > 0} label={`Brutas: ${rawFiles.length} arquivo(s)`} />
                 <SummaryRow ok={pdfFile !== null} label={pdfFile ? `PDF: ${pdfRows.length} título(s)` : "PDF: —"} />
               </ul>
               <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <Button variant="ghost" onClick={() => goNext(3)}>Voltar</Button>
+                <Button variant="ghost" onClick={() => goNext(4)}>Voltar</Button>
                 <Button
                   size="lg"
                   onClick={onGenerate}
@@ -731,19 +801,20 @@ function Stepper({
 }: {
   current: StepId;
   setStep: (s: StepId) => void;
-  done: Record<1 | 2 | 3, boolean>;
+  done: Record<1 | 2 | 3 | 4, boolean>;
 }) {
   const steps: { id: StepId; label: string }[] = [
     { id: 1, label: "Mês anterior" },
-    { id: 2, label: "Brutas" },
-    { id: 3, label: "PDF" },
-    { id: 4, label: "Gerar" },
+    { id: 2, label: "Mês" },
+    { id: 3, label: "Brutas" },
+    { id: 4, label: "PDF" },
+    { id: 5, label: "Gerar" },
   ];
   return (
     <ol className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
       {steps.map((s, i) => {
         const isCurrent = current === s.id;
-        const isDone = s.id < current || (s.id !== 4 && done[s.id as 1 | 2 | 3]);
+        const isDone = s.id < current || (s.id !== 5 && done[s.id as 1 | 2 | 3 | 4]);
         const canJump = s.id < current || isDone;
         return (
           <li key={s.id} className="flex items-center gap-2 sm:gap-3">
