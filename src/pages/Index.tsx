@@ -408,7 +408,7 @@ const Index = () => {
         <div className="flex items-start gap-3 rounded-2xl border border-accent/40 bg-accent/20 backdrop-blur px-5 py-4 text-sm text-accent-foreground">
           <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
           <p className="text-muted-foreground">
-            Nenhuma informação é salva. Tudo é processado no seu navegador e descartado ao fechar a página.
+            Seus arquivos são processados localmente no navegador. O conteúdo não é enviado nem armazenado em servidores.
           </p>
         </div>
 
