@@ -349,22 +349,24 @@ export function applyPagamentosPdf(
 
     if (matches.length === 0) continue;
 
-    // Only open installments (Valor aberto > 0 e sem Data baixa).
-    const open = matches.filter(
-      (r) => r.valorAberto > 0 && r.dataBaixa == null && r.vencimento,
-    );
-
-    // PDF sobrescreve mês anterior somente quando houver match (open ou não).
-    if (open.length === 0) {
-      // Todas parcelas do PDF pagas → nada a mostrar; sobrescreve com vazio.
-      nota.informacoes = "";
-      continue;
+    // Se qualquer parcela ainda está sem Data baixa → NF ainda tem parcelas em aberto.
+    const hasPending = matches.some((r) => r.dataBaixa == null);
+    let text: string;
+    if (hasPending) {
+      text = "Próximas parcelas ainda sem programação";
+    } else {
+      const dates = matches
+        .map((r) => r.dataBaixa as Date)
+        .filter((d): d is Date => d != null);
+      text = formatVencList(dates);
     }
 
-    const dates = open.map((r) => r.vencimento as Date);
-    let text = formatVencList(dates);
-    const soma = open.reduce((s, r) => s + r.valorAberto, 0);
-    if (Math.abs(soma - nota.faltaPagar) > 0.01) {
+    // Conferência: soma do valor total das parcelas vs FALTA PAGAR.
+    const somaTotal = matches.reduce(
+      (s, r) => s + (r.valorTitulo || r.valorAberto || 0),
+      0,
+    );
+    if (Math.abs(somaTotal - nota.faltaPagar) > 0.01) {
       text += " (conferir)";
     }
     nota.informacoes = text;
