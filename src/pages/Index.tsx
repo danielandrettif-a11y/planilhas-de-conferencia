@@ -173,7 +173,7 @@ const Index = () => {
       setPrevSheets(sheets);
       setPrevSkipped(false);
     } catch (err) {
-      console.error(err);
+      if (import.meta.env.DEV) console.error(err);
       toast({
         title: "Falha ao ler arquivo",
         description: "Não foi possível ler a planilha do mês anterior.",
@@ -208,7 +208,7 @@ const Index = () => {
       setPdfRows(rows);
       setPdfSkipped(false);
     } catch (err) {
-      console.error(err);
+      if (import.meta.env.DEV) console.error(err);
       toast({
         title: "Falha ao ler PDF",
         description: "Não foi possível processar o arquivo.",
@@ -259,7 +259,7 @@ const Index = () => {
           }
           parsed.push({ file: f, conta, rows: json });
         } catch (err) {
-          console.error(err);
+          if (import.meta.env.DEV) console.error(err);
           skipped.push(`${f.name} (falha ao ler)`);
         }
       }
@@ -347,7 +347,7 @@ const Index = () => {
         description: `${sheets.length} aba(s) · ${totalNotas} nota(s) exportada(s). Nenhum dado foi armazenado.`,
       });
     } catch (err) {
-      console.error(err);
+      if (import.meta.env.DEV) console.error(err);
       const msg = err instanceof Error ? err.message : "Tente novamente com outro arquivo.";
       toast({
         title: "Erro ao gerar planilha",
@@ -408,7 +408,7 @@ const Index = () => {
         <div className="flex items-start gap-3 rounded-2xl border border-accent/40 bg-accent/20 backdrop-blur px-5 py-4 text-sm text-accent-foreground">
           <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
           <p className="text-muted-foreground">
-            Nenhuma informação é salva. Tudo é processado no seu navegador e descartado ao fechar a página.
+            Seus arquivos são processados localmente no navegador. O conteúdo não é enviado nem armazenado em servidores.
           </p>
         </div>
 
