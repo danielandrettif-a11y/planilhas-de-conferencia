@@ -801,19 +801,20 @@ function Stepper({
 }: {
   current: StepId;
   setStep: (s: StepId) => void;
-  done: Record<1 | 2 | 3, boolean>;
+  done: Record<1 | 2 | 3 | 4, boolean>;
 }) {
   const steps: { id: StepId; label: string }[] = [
     { id: 1, label: "Mês anterior" },
-    { id: 2, label: "Brutas" },
-    { id: 3, label: "PDF" },
-    { id: 4, label: "Gerar" },
+    { id: 2, label: "Mês" },
+    { id: 3, label: "Brutas" },
+    { id: 4, label: "PDF" },
+    { id: 5, label: "Gerar" },
   ];
   return (
     <ol className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
       {steps.map((s, i) => {
         const isCurrent = current === s.id;
-        const isDone = s.id < current || (s.id !== 4 && done[s.id as 1 | 2 | 3]);
+        const isDone = s.id < current || (s.id !== 5 && done[s.id as 1 | 2 | 3 | 4]);
         const canJump = s.id < current || isDone;
         return (
           <li key={s.id} className="flex items-center gap-2 sm:gap-3">
