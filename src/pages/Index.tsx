@@ -375,112 +375,231 @@ const Index = () => {
           </p>
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-2">
-        <StepCard
-          step="01"
-          title="Planilhas brutas do mês atual"
-          description="Envie uma ou mais planilhas. O nome do arquivo deve conter o código da conta (ex.: 81354.xlsx). Cada arquivo vira uma aba na planilha final."
-        >
-          <div className="space-y-3">
-            <Dropzone
-              inputRef={inputRef}
-              dragOver={dragOver}
-              setDragOver={setDragOver}
-              onDrop={onDrop}
-              onSelect={handleFiles}
-              loading={loading}
-              multiple
-              label={
-                rawFiles.length > 0
-                  ? "Adicionar mais arquivos"
-                  : "Solte os arquivos aqui"
-              }
-            />
-            {rawFiles.length > 0 && (
-              <div className="space-y-2">
-                {rawFiles.map((r) => (
-                  <FileChip
-                    key={r.conta}
-                    name={r.file.name}
-                    info={`aba ${r.conta} · ${formatSize(r.file.size)} · ${r.rows.length} linhas`}
-                    onRemove={() => removeRaw(r.conta)}
+        <Stepper
+          current={step}
+          setStep={setStep}
+          done={{ 1: step1Done, 2: step2Done, 3: step3Done }}
+        />
+
+        {step === 1 && (
+          <StepCard
+            step="01"
+            title="Planilha do mês anterior"
+            badge="opcional"
+            description="Um único arquivo com uma aba por conta (mesmo código do mês atual). Importa a coluna INFORMAÇÕES."
+          >
+            <div className="space-y-4">
+              {!prevSkipped ? (
+                !prevFile ? (
+                  <Dropzone
+                    inputRef={prevInputRef}
+                    dragOver={prevDragOver}
+                    setDragOver={setPrevDragOver}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setPrevDragOver(false);
+                      const f = e.dataTransfer.files?.[0];
+                      if (f) handlePrevFile(f);
+                    }}
+                    onSelect={(fs) => {
+                      const f = Array.isArray(fs) ? fs[0] : fs[0];
+                      if (f) handlePrevFile(f);
+                    }}
+                    loading={prevLoading}
+                    label="Solte a planilha do mês anterior aqui"
                   />
-                ))}
-                {rawFiles.length > 1 && (
-                  <button
-                    onClick={resetAll}
-                    className="text-xs text-muted-foreground hover:text-foreground font-mono"
-                  >
-                    limpar todos
-                  </button>
-                )}
+                ) : (
+                  <FileChip
+                    name={prevFile.name}
+                    info={`${formatSize(prevFile.size)} · ${Object.keys(prevSheets).length} aba(s): ${Object.keys(prevSheets).join(", ")}`}
+                    onRemove={resetPrev}
+                  />
+                )
+              ) : (
+                <div className="rounded-2xl border border-border/60 bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
+                  Sem planilha do mês anterior — a coluna INFORMAÇÕES ficará em branco.
+                </div>
+              )}
+
+              <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+                <Checkbox
+                  checked={prevSkipped}
+                  onCheckedChange={(v) => {
+                    const on = v === true;
+                    setPrevSkipped(on);
+                    if (on) resetPrev();
+                  }}
+                />
+                Não tenho a planilha do mês anterior
+              </label>
+
+              <div className="flex justify-end">
+                <Button
+                  onClick={() => goNext(2)}
+                  disabled={!step1Done}
+                  className="bg-primary text-primary-foreground hover:bg-primary/90"
+                >
+                  Continuar
+                </Button>
               </div>
-            )}
-          </div>
-        </StepCard>
+            </div>
+          </StepCard>
+        )}
 
-        <StepCard
-          step="02"
-          title="Planilha do mês anterior"
-          badge="opcional"
-          description="Um único arquivo com uma aba por conta (mesmo código do mês atual). Importa a coluna INFORMAÇÕES."
-        >
-          {!prevFile ? (
-            <Dropzone
-              inputRef={prevInputRef}
-              dragOver={prevDragOver}
-              setDragOver={setPrevDragOver}
-              onDrop={(e) => {
-                e.preventDefault();
-                setPrevDragOver(false);
-                const f = e.dataTransfer.files?.[0];
-                if (f) handlePrevFile(f);
-              }}
-              onSelect={(fs) => {
-                const f = Array.isArray(fs) ? fs[0] : fs[0];
-                if (f) handlePrevFile(f);
-              }}
-              loading={prevLoading}
-              label="Solte a planilha do mês anterior aqui"
-            />
-          ) : (
-            <FileChip
-              name={prevFile.name}
-              info={`${formatSize(prevFile.size)} · ${Object.keys(prevSheets).length} aba(s): ${Object.keys(prevSheets).join(", ")}`}
-              onRemove={resetPrev}
-            />
-          )}
-        </StepCard>
-        </div>
+        {step === 2 && (
+          <StepCard
+            step="02"
+            title="Planilhas brutas do mês atual"
+            description="Envie uma ou mais planilhas. O nome do arquivo deve conter o código da conta (ex.: 81354.xlsx). Cada arquivo vira uma aba na planilha final."
+          >
+            <div className="space-y-4">
+              <Dropzone
+                inputRef={inputRef}
+                dragOver={dragOver}
+                setDragOver={setDragOver}
+                onDrop={onDrop}
+                onSelect={handleFiles}
+                loading={loading}
+                multiple
+                label={
+                  rawFiles.length > 0
+                    ? "Adicionar mais arquivos"
+                    : "Solte os arquivos aqui"
+                }
+              />
+              {rawFiles.length > 0 && (
+                <div className="space-y-2">
+                  {rawFiles.map((r) => (
+                    <FileChip
+                      key={r.conta}
+                      name={r.file.name}
+                      info={`aba ${r.conta} · ${formatSize(r.file.size)} · ${r.rows.length} linhas`}
+                      onRemove={() => removeRaw(r.conta)}
+                    />
+                  ))}
+                  {rawFiles.length > 1 && (
+                    <button
+                      onClick={resetAll}
+                      className="text-xs text-muted-foreground hover:text-foreground font-mono"
+                    >
+                      limpar todos
+                    </button>
+                  )}
+                </div>
+              )}
+              <div className="flex justify-between">
+                <Button variant="ghost" onClick={() => goNext(1)}>Voltar</Button>
+                <Button
+                  onClick={() => goNext(3)}
+                  disabled={!step2Done}
+                  className="bg-primary text-primary-foreground hover:bg-primary/90"
+                >
+                  Continuar
+                </Button>
+              </div>
+            </div>
+          </StepCard>
+        )}
 
-        {rawFiles.length > 0 && (
+        {step === 3 && (
+          <StepCard
+            step="03"
+            title="PDF de pagamentos"
+            badge="opcional"
+            description="Relatório em PDF com todos os pagamentos do mês. Usado para preencher a coluna INFORMAÇÕES com as parcelas em aberto."
+          >
+            <div className="space-y-4">
+              {!pdfSkipped ? (
+                !pdfFile ? (
+                  <Dropzone
+                    inputRef={pdfInputRef}
+                    dragOver={pdfDragOver}
+                    setDragOver={setPdfDragOver}
+                    accept=".pdf"
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setPdfDragOver(false);
+                      const f = e.dataTransfer.files?.[0];
+                      if (f) handlePdfFile(f);
+                    }}
+                    onSelect={(fs) => {
+                      const f = Array.isArray(fs) ? fs[0] : fs[0];
+                      if (f) handlePdfFile(f);
+                    }}
+                    loading={pdfLoading}
+                    label="Solte o PDF de pagamentos aqui"
+                  />
+                ) : (
+                  <FileChip
+                    name={pdfFile.name}
+                    info={`${formatSize(pdfFile.size)} · ${pdfRows.length} título(s) lidos`}
+                    onRemove={resetPdf}
+                    icon="pdf"
+                  />
+                )
+              ) : (
+                <div className="rounded-2xl border border-border/60 bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
+                  Sem PDF de pagamentos — a coluna INFORMAÇÕES virá apenas do mês anterior (se houver).
+                </div>
+              )}
+
+              <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+                <Checkbox
+                  checked={pdfSkipped}
+                  onCheckedChange={(v) => {
+                    const on = v === true;
+                    setPdfSkipped(on);
+                    if (on) resetPdf();
+                  }}
+                />
+                Não tenho o PDF de pagamentos
+              </label>
+
+              <div className="flex justify-between">
+                <Button variant="ghost" onClick={() => goNext(2)}>Voltar</Button>
+                <Button
+                  onClick={() => goNext(4)}
+                  disabled={!step3Done}
+                  className="bg-primary text-primary-foreground hover:bg-primary/90"
+                >
+                  Continuar
+                </Button>
+              </div>
+            </div>
+          </StepCard>
+        )}
+
+        {step === 4 && (
           <div className="relative overflow-hidden rounded-3xl border border-primary/30 bg-[var(--gradient-surface)] p-8 shadow-[var(--shadow-soft)]">
             <div className="absolute -top-24 -right-24 h-64 w-64 rounded-full bg-primary/20 blur-3xl" />
-            <div className="relative flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="relative space-y-6">
               <div className="space-y-1">
-                <p className="text-xs uppercase tracking-[0.25em] text-primary font-mono">03 · finalizar</p>
+                <p className="text-xs uppercase tracking-[0.25em] text-primary font-mono">04 · finalizar</p>
                 <h3 className="text-2xl font-semibold tracking-tight">
                   Gerar planilha ({rawFiles.length} aba{rawFiles.length > 1 ? "s" : ""})
                 </h3>
-                <p className="text-sm text-muted-foreground max-w-md">
-                  {prevFile
-                    ? "A coluna INFORMAÇÕES será preenchida com base na planilha anterior."
-                    : "A coluna INFORMAÇÕES ficará em branco (nenhuma planilha anterior)."}
-                </p>
               </div>
-              <Button
-                size="lg"
-                onClick={onGenerate}
-                disabled={generating}
-                className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-[var(--shadow-glow)] font-semibold"
-              >
-                {generating ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Download className="mr-2 h-4 w-4" />
-                )}
-                Gerar planilha
-              </Button>
+              <ul className="space-y-2 text-sm">
+                <SummaryRow ok={prevFile !== null} label={prevFile ? `Mês anterior: ${Object.keys(prevSheets).length} aba(s)` : "Mês anterior: —"} />
+                <SummaryRow ok={rawFiles.length > 0} label={`Brutas: ${rawFiles.length} arquivo(s)`} />
+                <SummaryRow ok={pdfFile !== null} label={pdfFile ? `PDF: ${pdfRows.length} título(s)` : "PDF: —"} />
+              </ul>
+              <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <Button variant="ghost" onClick={() => goNext(3)}>Voltar</Button>
+                <Button
+                  size="lg"
+                  onClick={onGenerate}
+                  disabled={generating || rawFiles.length === 0}
+                  className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-[var(--shadow-glow)] font-semibold"
+                >
+                  {generating ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Download className="mr-2 h-4 w-4" />
+                  )}
+                  Gerar planilha
+                </Button>
+              </div>
             </div>
           </div>
         )}
