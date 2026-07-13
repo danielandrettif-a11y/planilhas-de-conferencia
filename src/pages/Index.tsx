@@ -173,7 +173,7 @@ const Index = () => {
       setPrevSheets(sheets);
       setPrevSkipped(false);
     } catch (err) {
-      console.error(err);
+      if (import.meta.env.DEV) console.error(err);
       toast({
         title: "Falha ao ler arquivo",
         description: "Não foi possível ler a planilha do mês anterior.",
