@@ -30,15 +30,6 @@ interface TextItem {
   w: number;
 }
 
-// Column x-ranges detected from the header of each page.
-interface Columns {
-  numero: [number, number];
-  titulo: [number, number];
-  valorTitulo: [number, number];
-  valorAberto: [number, number];
-  dataBaixa: [number, number];
-}
-
 function groupByLine(items: TextItem[]): TextItem[][] {
   const sorted = [...items].sort((a, b) => b.y - a.y || a.x - b.x);
   const lines: TextItem[][] = [];
@@ -52,88 +43,54 @@ function groupByLine(items: TextItem[]): TextItem[][] {
   return lines;
 }
 
-function joinInRange(line: TextItem[], range: [number, number]): string {
-  const parts: string[] = [];
-  for (const it of line) {
-    const cx = it.x + it.w / 2;
-    if (cx >= range[0] && cx < range[1]) parts.push(it.str);
-  }
-  return parts.join(" ").replace(/\s+/g, " ").trim();
+function joinLine(line: TextItem[]): string {
+  return line.map((i) => i.str).join(" ").replace(/\s+/g, " ").trim();
 }
 
-function detectColumns(lines: TextItem[][]): Columns | null {
-  // Look for header line containing "Número título" split possibly across items.
-  for (const line of lines) {
-    const text = line.map((i) => i.str).join(" ").toLowerCase();
-    if (
-      text.includes("número título") &&
-      text.includes("valor") &&
-      text.includes("baixa")
-    ) {
-      const xNumero = (() => {
-        for (const it of line) {
-          if (it.str.toLowerCase().includes("número")) return it.x;
-        }
-        return null;
-      })();
-      // "Título" appears twice; second occurrence after "Número título"
-      let xTitulo: number | null = null;
-      let seenNumero = false;
-      for (const it of line) {
-        const s = it.str.toLowerCase();
-        if (!seenNumero && s.includes("número")) seenNumero = true;
-        else if (seenNumero && s.includes("título") && !s.includes("número")) {
-          xTitulo = it.x;
-          break;
-        }
-      }
-      // Values
-      let xValorTitulo: number | null = null;
-      let xValorAberto: number | null = null;
-      let seenValor = 0;
-      for (const it of line) {
-        const s = it.str.toLowerCase();
-        if (s.includes("valor")) {
-          if (seenValor === 0) xValorTitulo = it.x;
-          else if (seenValor === 1) xValorAberto = it.x;
-          seenValor++;
-        }
-      }
-      let xBaixa: number | null = null;
-      for (const it of line) {
-        if (it.str.toLowerCase().includes("baixa")) {
-          xBaixa = it.x;
-          break;
-        }
-      }
+// Regex: prefix, valorTitulo, valorAberto, optional dataBaixa
+const LINE_RE =
+  /^(.*?)\s+(\d{1,3}(?:\.\d{3})*,\d{2})\s+(\d{1,3}(?:\.\d{3})*,\d{2})(?:\s+(\d{2}\/\d{2}\/\d{4}))?\s*$/;
 
-      if (
-        xNumero == null ||
-        xTitulo == null ||
-        xValorTitulo == null ||
-        xValorAberto == null ||
-        xBaixa == null
-      )
-        continue;
+// Token is "date-like" if it contains only digits and slashes (covers scrambled
+// interleaved dates like "11/030/220/0174/2026" and normal "22/04/2026").
+function isDateLikeToken(t: string): boolean {
+  return /^[\d/]+$/.test(t) && /\//.test(t);
+}
 
-      const cols: Columns = {
-        numero: [xNumero - 5, xTitulo - 2],
-        titulo: [xTitulo - 2, xValorTitulo - 5],
-        valorTitulo: [xValorTitulo - 5, xValorAberto - 5],
-        valorAberto: [xValorAberto - 5, xBaixa - 5],
-        dataBaixa: [xBaixa - 5, 10_000],
-      };
-      return cols;
-    }
+function parseLine(text: string): PagamentoRow | null {
+  const m = text.match(LINE_RE);
+  if (!m) return null;
+  let prefix = m[1].trim();
+  const valorTitulo = parseBrNumber(m[2]);
+  const valorAberto = parseBrNumber(m[3]);
+  const dataBaixa = m[4] ? parseBrDate(m[4]) : null;
+
+  const tokens = prefix.split(/\s+/);
+  // Remove trailing date-like tokens (the 2-4 date columns before values).
+  while (tokens.length > 0 && isDateLikeToken(tokens[tokens.length - 1])) {
+    tokens.pop();
   }
-  return null;
+  if (tokens.length === 0) return null;
+
+  let numero = tokens.shift() as string;
+  // Reject headers / summary lines.
+  if (!/\d/.test(numero)) return null;
+  // Strip "0006" empresa prefix if present (leading zeros + short digits).
+  numero = numero.replace(/^0+/, "");
+  const digits = numero.replace(/\D+/g, "");
+  if (digits.length < 3) return null;
+
+  const fornecedor = tokens.join(" ").trim();
+  if (!fornecedor) return null;
+  if (/filtro/i.test(fornecedor)) return null;
+
+  return { numero, fornecedor, valorTitulo, valorAberto, dataBaixa };
 }
 
 export async function parsePagamentosPdf(file: File): Promise<PagamentoRow[]> {
   const buf = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
   const rows: PagamentoRow[] = [];
-  let pagesWithHeader = 0;
 
   for (let p = 1; p <= pdf.numPages; p++) {
     const page = await pdf.getPage(p);
@@ -153,55 +110,14 @@ export async function parsePagamentosPdf(file: File): Promise<PagamentoRow[]> {
       });
     }
     const lines = groupByLine(items);
-    const cols = detectColumns(lines);
-    if (!cols) {
-      console.info(`[pdf] página ${p}: cabeçalho não detectado`);
-      continue;
-    }
-    pagesWithHeader++;
-
-    // Find header y so data lines are below it.
-    let headerY = Infinity;
     for (const line of lines) {
-      const t = line.map((i) => i.str).join(" ").toLowerCase();
-      if (t.includes("número título")) {
-        headerY = line[0].y;
-        break;
-      }
-    }
-
-    for (const line of lines) {
-      if (line[0].y >= headerY) continue;
-      const numeroRaw = joinInRange(line, cols.numero);
-      const titulo = joinInRange(line, cols.titulo);
-      const valorTituloStr = joinInRange(line, cols.valorTitulo);
-      const valorAbertoStr = joinInRange(line, cols.valorAberto);
-      const baixaStr = joinInRange(line, cols.dataBaixa);
-
-      if (!numeroRaw || !titulo) continue;
-      // Skip lines that look like filters/footers
-      if (/filtro/i.test(numeroRaw + " " + titulo)) continue;
-      // Require at least 3 digits in the número
-      const digits = numeroRaw.replace(/\D+/g, "");
-      if (digits.length < 3) continue;
-
-      const dataBaixa = parseBrDate(baixaStr);
-      const valorTitulo = parseBrNumber(valorTituloStr);
-      const valorAberto = parseBrNumber(valorAbertoStr);
-
-      rows.push({
-        numero: numeroRaw,
-        fornecedor: titulo,
-        valorTitulo,
-        valorAberto,
-        dataBaixa,
-      });
+      const text = joinLine(line);
+      const row = parseLine(text);
+      if (row) rows.push(row);
     }
   }
 
-  console.info(
-    `[pdf] ${pdf.numPages} página(s), header em ${pagesWithHeader}, ${rows.length} linha(s) extraída(s)`,
-  );
+  console.info(`[pdf] ${pdf.numPages} página(s), ${rows.length} linha(s) extraída(s)`);
   if (rows.length > 0) console.info("[pdf] amostra:", rows.slice(0, 3));
   return rows;
 }
