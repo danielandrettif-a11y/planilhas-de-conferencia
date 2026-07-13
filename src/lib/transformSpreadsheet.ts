@@ -201,6 +201,14 @@ function fornecedorTokens(v: unknown): Set<string> {
   const stop = new Set([
     "ltda", "me", "epp", "sa", "s", "a", "eireli", "cia", "e", "de", "da", "do",
     "das", "dos", "the", "com",
+    // Termos genéricos que causam falsos matches entre fornecedores distintos.
+    "servicos", "servico", "servicoss", "medicos", "medico", "medica", "medicas",
+    "comercio", "comercial", "industria", "industrial", "produtos", "produto",
+    "distribuidora", "distribuidor", "transportes", "transporte", "alimentos",
+    "brasil", "brasileira", "nacional", "importacao", "exportacao", "solucoes",
+    "tecnologia", "sistemas", "engenharia", "construcao", "hospitalar",
+    "hospital", "clinica", "clinicas", "diagnostico", "diagnosticos",
+    "farmaceutica", "farmaceuticos", "quimica", "quimicos", "informatica",
   ]);
   return new Set(
     normFornecedor(v)
@@ -432,10 +440,16 @@ export function applyPagamentosPdf(
       (s, r) => s + (r.valorTitulo || r.valorAberto || 0),
       0,
     );
-    const sumMismatch = Math.abs(somaTotal - nota.faltaPagar) > 0.01;
-    if ((sumMismatch || fuzzyMatch || lastDayFlag) && text && !/\(conferir\)/i.test(text)) {
+    // Só sinalizamos divergência de soma quando TODAS as parcelas já foram pagas
+    // (não há pendentes). Se ainda há parcelas em aberto, o "falta pagar" da
+    // planilha reflete apenas o restante, e a soma total do PDF vai divergir
+    // naturalmente — não é erro.
+    const sumMismatch =
+      !hasPending && Math.abs(somaTotal - nota.faltaPagar) > 0.01;
+    const flagConferir = sumMismatch || fuzzyMatch || lastDayFlag;
+    if (flagConferir && text && !/\(conferir\)/i.test(text)) {
       text += " (conferir)";
-    } else if ((sumMismatch || fuzzyMatch) && !text) {
+    } else if (flagConferir && !text) {
       text = "(conferir)";
     }
     if (text) nota.informacoes = text;
