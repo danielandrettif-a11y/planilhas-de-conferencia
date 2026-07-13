@@ -1,34 +1,41 @@
-## Nova regra da coluna INFORMAÇÕES (via PDF)
+## Diagnóstico
 
-Ao invés de listar as **datas de vencimento** das parcelas em aberto, o app passa a olhar a coluna **Data baixa** de cada parcela da NF no PDF.
+A regra da coluna INFORMAÇÕES está correta no código (`applyPagamentosPdf`):
+- Todas as parcelas com Data baixa → lista todas as datas.
+- Alguma parcela sem Data baixa → "Próximas parcelas ainda sem programação".
 
-### Regras para cada NF encontrada no PDF
+O motivo da coluna vir totalmente vazia é o **parser do PDF descartando as linhas**: hoje ele exige um `Data vencimento` válido (`if (!venc) continue;`) para aceitar cada linha. Neste PDF a coluna de vencimento parece estar sendo lida do lugar errado (o cabeçalho tem "Data vencimento" e "Data vencimento c/ prorrog.") e cai fora da faixa esperada, então TODAS as parcelas são descartadas antes de chegar no match.
 
-1. **Todas as parcelas têm Data baixa preenchida** (NF totalmente paga):
-   - Lista só as datas de baixa, ordenadas crescentemente.
-   - Formato: `10/06 e 10/07/2026` — `dd/MM` nas anteriores, `dd/MM/yyyy` só na última, separadores `, ` e ` e `.
-   - Sem prefixo ("Pago em"/"Baixa em").
-2. **Alguma parcela sem Data baixa** (ainda tem algo em aberto):
-   - Texto fixo: `Próximas parcelas ainda sem programação` (com "P" maiúsculo).
-   - Ignora as datas das parcelas já pagas nesse caso.
-3. **Conferência de soma**: mantém o sufixo `(conferir)` quando a soma das parcelas do título ≠ `FALTA PAGAR` da planilha.
+## O que fazer
 
-### Precedência (inalterada)
+### 1. `src/lib/parsePagamentosPdf.ts` — ignorar Data vencimento
 
-1. NF aparece no PDF → texto vem do PDF (regras acima).
-2. NF não aparece no PDF → mantém texto da planilha do mês anterior.
-3. Não aparece em nenhum → coluna em branco.
+- Remover `vencimento` do tipo `PagamentoRow` (não é mais usado em lugar nenhum).
+- Remover a detecção de coluna `vencimento` em `detectColumns` e as faixas dependentes.
+- Reconstruir as faixas de coluna a partir dos headers que interessam apenas: `Número título`, `Título`, `Valor título`, `Valor aberto`, `Data baixa`. Fim de cada faixa = x do próximo header à direita.
+- Nova regra de aceitação de linha: aceita se `numero` (só dígitos após normalização) tiver ≥ 3 dígitos **e** `titulo` (fornecedor) não estiver vazio. Não exigir mais data.
+- Continuar parseando `Data baixa` via `parseBrDate` — se vazio, `dataBaixa = null` (parcela em aberto).
+- Adicionar `console.info` com: páginas processadas, header detectado sim/não por página, total de linhas extraídas.
 
-### Onde mexer no código
+### 2. `src/lib/transformSpreadsheet.ts` — limpar referências a `vencimento`
 
-- `src/lib/transformSpreadsheet.ts`, função `applyPagamentosPdf`:
-  - Trocar o filtro atual (só parcelas com `valorAberto > 0` e sem `dataBaixa`) por uma varredura de **todas** as parcelas da NF.
-  - Se `parcelas.some(p => !p.dataBaixa)` → escrever `Próximas parcelas ainda sem programação`.
-  - Senão → formatar `parcelas.map(p => p.dataBaixa).sort()` com o formato de datas já existente.
-  - Manter validação `soma dos valorTitulo (ou equivalente) vs FALTA PAGAR` para adicionar `(conferir)`.
-- `src/lib/parsePagamentosPdf.ts`: sem mudança (já captura `dataBaixa`).
-- `src/pages/Index.tsx`: sem mudança.
+- Remover qualquer leitura de `r.vencimento` (não há uso funcional depois da mudança).
+- Manter a lógica atual de `applyPagamentosPdf`:
+  - Match: `numeroNorm` exato ou `startsWith(nfNorm)` com sufixo puramente numérico, exigindo overlap de fornecedor.
+  - `hasPending = matches.some(r => r.dataBaixa == null)` → texto fixo "Próximas parcelas ainda sem programação".
+  - Caso contrário → `formatVencList(dataBaixa)` (já produz "dd/MM, dd/MM e dd/MM/yyyy").
+  - Sufixo `(conferir)` quando soma total ≠ FALTA PAGAR.
 
-### Notas
+### 3. `src/pages/Index.tsx` — feedback e log
+- No handler do Passo 03, após `parsePagamentosPdf`, logar `pdfRows.length` e as 3 primeiras linhas no console.
+- Já existe o chip mostrando "X parcela(s)"; garantir que continua exibindo o total real.
 
-- A comparação de soma para `(conferir)` passa a usar o **valor total do título** (todas as parcelas), não só as em aberto, para refletir o valor original da NF.
+### 4. Atualizar `.lovable/plan.md`
+Refletir a nova regra: parser ignora Data vencimento; coluna INFORMAÇÕES usa apenas Data baixa e regra binária (todas pagas vs. alguma em aberto).
+
+### 5. Validação
+- Recarregar o PDF de exemplo.
+- Conferir no console: `pdfRows.length` > 0 e linhas com `numero`/`dataBaixa`.
+- NF 9888 (3 parcelas todas com Data baixa 22/04, 22/05, 22/06/2026) → INFORMAÇÕES deve mostrar `22/04, 22/05 e 22/06/2026`.
+- NF com alguma parcela em aberto → `Próximas parcelas ainda sem programação`.
+- NF fora do PDF → coluna em branco (ou herda do mês anterior, se houver).
