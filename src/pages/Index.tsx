@@ -655,6 +655,7 @@ function Dropzone({
   loading,
   label,
   multiple,
+  accept,
 }: {
   inputRef: React.RefObject<HTMLInputElement>;
   dragOver: boolean;
@@ -664,6 +665,7 @@ function Dropzone({
   loading: boolean;
   label: string;
   multiple?: boolean;
+  accept?: string;
 }) {
   return (
     <div
@@ -687,12 +689,12 @@ function Dropzone({
         {loading ? "Lendo arquivo..." : label}
       </p>
       <p className="mt-1 text-xs text-muted-foreground font-mono">
-        clique ou arraste · .xlsx .xls{multiple ? " · múltiplos" : ""}
+        clique ou arraste · {accept ?? ".xlsx .xls"}{multiple ? " · múltiplos" : ""}
       </p>
       <input
         ref={inputRef}
         type="file"
-        accept=".xlsx,.xls"
+        accept={accept ?? ".xlsx,.xls"}
         multiple={multiple}
         className="hidden"
         onChange={(e) => {
@@ -703,12 +705,12 @@ function Dropzone({
   );
 }
 
-function FileChip({ name, info, onRemove }: { name: string; info: string; onRemove: () => void }) {
+function FileChip({ name, info, onRemove, icon }: { name: string; info: string; onRemove: () => void; icon?: "sheet" | "pdf" }) {
   return (
     <div className="flex items-center justify-between rounded-2xl border border-primary/30 bg-primary/5 px-4 py-3">
       <div className="flex items-center gap-3 min-w-0">
         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/15 text-primary shrink-0">
-          <FileSpreadsheet className="h-5 w-5" />
+          {icon === "pdf" ? <FileText className="h-5 w-5" /> : <FileSpreadsheet className="h-5 w-5" />}
         </div>
         <div className="min-w-0">
           <p className="font-medium truncate">{name}</p>
@@ -720,6 +722,79 @@ function FileChip({ name, info, onRemove }: { name: string; info: string; onRemo
         Remover
       </Button>
     </div>
+  );
+}
+
+function Stepper({
+  current,
+  setStep,
+  done,
+}: {
+  current: StepId;
+  setStep: (s: StepId) => void;
+  done: Record<1 | 2 | 3, boolean>;
+}) {
+  const steps: { id: StepId; label: string }[] = [
+    { id: 1, label: "Mês anterior" },
+    { id: 2, label: "Brutas" },
+    { id: 3, label: "PDF" },
+    { id: 4, label: "Gerar" },
+  ];
+  return (
+    <ol className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+      {steps.map((s, i) => {
+        const isCurrent = current === s.id;
+        const isDone = s.id < current || (s.id !== 4 && done[s.id as 1 | 2 | 3]);
+        const canJump = s.id < current || isDone;
+        return (
+          <li key={s.id} className="flex items-center gap-2 sm:gap-3">
+            <button
+              type="button"
+              disabled={!canJump && !isCurrent}
+              onClick={() => canJump && setStep(s.id)}
+              className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-mono transition-colors ${
+                isCurrent
+                  ? "border-primary bg-primary/10 text-primary"
+                  : isDone
+                  ? "border-border/60 bg-card/60 text-foreground hover:border-primary/40"
+                  : "border-border/40 bg-transparent text-muted-foreground"
+              }`}
+            >
+              <span
+                className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] ${
+                  isDone
+                    ? "bg-primary text-primary-foreground"
+                    : isCurrent
+                    ? "bg-primary/20 text-primary"
+                    : "bg-muted text-muted-foreground"
+                }`}
+              >
+                {isDone ? <Check className="h-3 w-3" /> : s.id}
+              </span>
+              {s.label}
+            </button>
+            {i < steps.length - 1 && (
+              <span className="h-px w-4 bg-border/60 sm:w-6" />
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+function SummaryRow({ ok, label }: { ok: boolean; label: string }) {
+  return (
+    <li className="flex items-center gap-2 text-muted-foreground">
+      <span
+        className={`flex h-5 w-5 items-center justify-center rounded-full ${
+          ok ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"
+        }`}
+      >
+        {ok ? <Check className="h-3 w-3" /> : <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40" />}
+      </span>
+      {label}
+    </li>
   );
 }
 
