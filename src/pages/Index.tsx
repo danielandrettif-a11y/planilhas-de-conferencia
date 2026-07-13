@@ -13,6 +13,13 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "@/hooks/use-toast";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import {
@@ -48,6 +55,32 @@ interface RawFile {
 
 type StepId = 1 | 2 | 3 | 4;
 
+const MESES_NOMES = [
+  "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+  "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+];
+
+function buildMesOptions(): { value: string; label: string }[] {
+  const now = new Date();
+  const out: { value: string; label: string }[] = [];
+  for (let y = now.getFullYear() - 1; y <= now.getFullYear() + 1; y++) {
+    for (let m = 1; m <= 12; m++) {
+      out.push({
+        value: `${y}-${String(m).padStart(2, "0")}`,
+        label: `${MESES_NOMES[m - 1]}/${y}`,
+      });
+    }
+  }
+  return out;
+}
+
+const MES_OPTIONS = buildMesOptions();
+
+function defaultMes(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
 const Index = () => {
   const [rawFiles, setRawFiles] = useState<RawFile[]>([]);
   const [dragOver, setDragOver] = useState(false);
@@ -64,6 +97,7 @@ const Index = () => {
   const [pdfDragOver, setPdfDragOver] = useState(false);
   const [pdfSkipped, setPdfSkipped] = useState(false);
   const [step, setStep] = useState<StepId>(1);
+  const [mesConferencia, setMesConferencia] = useState<string>(defaultMes());
   const inputRef = useRef<HTMLInputElement>(null);
   const prevInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
@@ -276,7 +310,10 @@ const Index = () => {
           applyPreviousInfo(result.notas, map);
         }
         if (pdfRows.length > 0) {
-          applyPagamentosPdf(result.notas, pdfRows);
+          const [ay, am] = mesConferencia.split("-").map(Number);
+          applyPagamentosPdf(result.notas, pdfRows, {
+            mesConferencia: { ano: ay, mes: am },
+          });
         }
         sheets.push({ conta: raw.conta, result });
         totalNotas += result.notas.length;
