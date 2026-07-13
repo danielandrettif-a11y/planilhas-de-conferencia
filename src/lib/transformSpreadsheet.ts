@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import type { PagamentoRow } from "./parsePagamentosPdf";
 
 export type SheetRow = Record<string, unknown>;
 
@@ -295,6 +296,78 @@ export function applyPreviousInfo(
       }
     }
     if (chosen) nota.informacoes = chosen.info;
+  }
+}
+
+// ============ Pagamentos PDF matching ============
+
+function formatVencList(dates: Date[]): string {
+  if (dates.length === 0) return "";
+  const sorted = [...dates].sort((a, b) => a.getTime() - b.getTime());
+  const dd = (d: Date) => String(d.getDate()).padStart(2, "0");
+  const mm = (d: Date) => String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = (d: Date) => String(d.getFullYear());
+  const short = sorted.slice(0, -1).map((d) => `${dd(d)}/${mm(d)}`);
+  const last = sorted[sorted.length - 1];
+  const lastStr = `${dd(last)}/${mm(last)}/${yyyy(last)}`;
+  if (short.length === 0) return lastStr;
+  if (short.length === 1) return `${short[0]} e ${lastStr}`;
+  return `${short.join(", ")} e ${lastStr}`;
+}
+
+export function applyPagamentosPdf(
+  notas: NotaFiscal[],
+  pdfRows: PagamentoRow[],
+): void {
+  if (pdfRows.length === 0) return;
+
+  // Pre-normalize PDF rows.
+  const normalized = pdfRows.map((r) => ({
+    ...r,
+    numeroNorm: normNota(r.numero),
+    tokens: fornecedorTokens(r.fornecedor),
+  }));
+
+  for (const nota of notas) {
+    const nfNorm = normNota(nota.notaFiscal);
+    if (!nfNorm) continue;
+    const notaTokens = fornecedorTokens(nota.fornecedor);
+
+    // Find matches: exact number OR title starts with nfNorm and suffix is digits only.
+    const matches = normalized.filter((r) => {
+      if (!r.numeroNorm) return false;
+      let ok = false;
+      if (r.numeroNorm === nfNorm) ok = true;
+      else if (r.numeroNorm.startsWith(nfNorm)) {
+        const suffix = r.numeroNorm.slice(nfNorm.length);
+        if (/^\d+$/.test(suffix)) ok = true;
+      }
+      if (!ok) return false;
+      // Require supplier overlap.
+      return tokenOverlap(notaTokens, r.tokens) > 0;
+    });
+
+    if (matches.length === 0) continue;
+
+    // Only open installments (Valor aberto > 0 e sem Data baixa).
+    const open = matches.filter(
+      (r) => r.valorAberto > 0 && r.dataBaixa == null && r.vencimento,
+    );
+
+    // PDF sobrescreve mês anterior somente quando houver match (open ou não).
+    if (open.length === 0) {
+      // Todas parcelas do PDF pagas → nada a mostrar; sobrescreve com vazio.
+      nota.informacoes = "";
+      continue;
+    }
+
+    const dates = open.map((r) => r.vencimento as Date);
+    let text = formatVencList(dates);
+    const soma = open.reduce((s, r) => s + r.valorAberto, 0);
+    if (Math.abs(soma - nota.faltaPagar) > 0.01) {
+      text += " (conferir)";
+    }
+    nota.informacoes = text;
   }
 }
 
