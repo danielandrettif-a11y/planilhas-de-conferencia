@@ -7,6 +7,7 @@ export interface PagamentoRow {
   numero: string;
   fornecedor: string;
   vencimento: Date | null;
+  valorTitulo: number;
   valorAberto: number;
   dataBaixa: Date | null;
 }
@@ -182,6 +183,7 @@ export async function parsePagamentosPdf(file: File): Promise<PagamentoRow[]> {
       const numeroRaw = joinInRange(line, cols.numero);
       const titulo = joinInRange(line, cols.titulo);
       const vencStr = joinInRange(line, cols.vencimento);
+      const valorTituloStr = joinInRange(line, cols.valorTitulo);
       const valorAbertoStr = joinInRange(line, cols.valorAberto);
       const baixaStr = joinInRange(line, cols.dataBaixa);
 
@@ -193,12 +195,14 @@ export async function parsePagamentosPdf(file: File): Promise<PagamentoRow[]> {
       if (!venc) continue;
 
       const dataBaixa = parseBrDate(baixaStr);
+      const valorTitulo = parseBrNumber(valorTituloStr);
       const valorAberto = parseBrNumber(valorAbertoStr);
 
       rows.push({
         numero: numeroRaw,
         fornecedor: titulo,
         vencimento: venc,
+        valorTitulo,
         valorAberto,
         dataBaixa,
       });
