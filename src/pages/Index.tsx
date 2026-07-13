@@ -1,7 +1,19 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
-import { FileSpreadsheet, Upload, Download, ShieldCheck, X, Loader2, Sparkles } from "lucide-react";
+import {
+  FileSpreadsheet,
+  Upload,
+  Download,
+  ShieldCheck,
+  X,
+  Loader2,
+  Sparkles,
+  Check,
+  FileText,
+  Pencil,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "@/hooks/use-toast";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import {
@@ -9,9 +21,11 @@ import {
   buildXlsx,
   buildPreviousInfoMap,
   applyPreviousInfo,
+  applyPagamentosPdf,
   type SheetRow,
   type SheetInput,
 } from "@/lib/transformSpreadsheet";
+import { parsePagamentosPdf, type PagamentoRow } from "@/lib/parsePagamentosPdf";
 
 const ACCEPTED = [".xlsx", ".xls"];
 
@@ -33,6 +47,8 @@ interface RawFile {
   rows: SheetRow[];
 }
 
+type StepId = 1 | 2 | 3 | 4;
+
 const Index = () => {
   const [rawFiles, setRawFiles] = useState<RawFile[]>([]);
   const [dragOver, setDragOver] = useState(false);
@@ -42,8 +58,16 @@ const Index = () => {
   const [prevSheets, setPrevSheets] = useState<Record<string, SheetRow[]>>({});
   const [prevLoading, setPrevLoading] = useState(false);
   const [prevDragOver, setPrevDragOver] = useState(false);
+  const [prevSkipped, setPrevSkipped] = useState(false);
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [pdfRows, setPdfRows] = useState<PagamentoRow[]>([]);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [pdfDragOver, setPdfDragOver] = useState(false);
+  const [pdfSkipped, setPdfSkipped] = useState(false);
+  const [step, setStep] = useState<StepId>(1);
   const inputRef = useRef<HTMLInputElement>(null);
   const prevInputRef = useRef<HTMLInputElement>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
 
   const resetAll = () => {
     setRawFiles([]);
@@ -59,6 +83,16 @@ const Index = () => {
     setPrevSheets({});
     if (prevInputRef.current) prevInputRef.current.value = "";
   };
+
+  const resetPdf = () => {
+    setPdfFile(null);
+    setPdfRows([]);
+    if (pdfInputRef.current) pdfInputRef.current.value = "";
+  };
+
+  const step1Done = prevFile !== null || prevSkipped;
+  const step2Done = rawFiles.length > 0;
+  const step3Done = pdfFile !== null || pdfSkipped;
 
   const handlePrevFile = useCallback(async (f: File) => {
     const lower = f.name.toLowerCase();
@@ -103,6 +137,7 @@ const Index = () => {
       }
       setPrevFile(f);
       setPrevSheets(sheets);
+      setPrevSkipped(false);
     } catch (err) {
       console.error(err);
       toast({
@@ -112,6 +147,41 @@ const Index = () => {
       });
     } finally {
       setPrevLoading(false);
+    }
+  }, []);
+
+  const handlePdfFile = useCallback(async (f: File) => {
+    if (!f.name.toLowerCase().endsWith(".pdf")) {
+      toast({
+        title: "Arquivo inválido",
+        description: "Envie um arquivo .pdf.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setPdfLoading(true);
+    try {
+      const rows = await parsePagamentosPdf(f);
+      if (rows.length === 0) {
+        toast({
+          title: "PDF sem títulos reconhecidos",
+          description: "Não foi possível identificar linhas de pagamento.",
+          variant: "destructive",
+        });
+        return;
+      }
+      setPdfFile(f);
+      setPdfRows(rows);
+      setPdfSkipped(false);
+    } catch (err) {
+      console.error(err);
+      toast({
+        title: "Falha ao ler PDF",
+        description: "Não foi possível processar o arquivo.",
+        variant: "destructive",
+      });
+    } finally {
+      setPdfLoading(false);
     }
   }, []);
 
@@ -206,6 +276,9 @@ const Index = () => {
           const map = buildPreviousInfoMap(prev);
           applyPreviousInfo(result.notas, map);
         }
+        if (pdfRows.length > 0) {
+          applyPagamentosPdf(result.notas, pdfRows);
+        }
         sheets.push({ conta: raw.conta, result });
         totalNotas += result.notas.length;
       }
@@ -248,6 +321,8 @@ const Index = () => {
       setGenerating(false);
     }
   };
+
+  const goNext = (target: StepId) => setStep(target);
 
   return (
     <div className="min-h-screen">
