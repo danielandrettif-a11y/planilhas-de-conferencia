@@ -123,7 +123,8 @@ export async function parsePagamentosPdf(file: File): Promise<PagamentoRow[]> {
     }
   }
 
-  console.info(`[pdf] ${pdf.numPages} página(s), ${rows.length} linha(s) extraída(s)`);
-  if (rows.length > 0) console.info("[pdf] amostra:", rows.slice(0, 3));
+  if (import.meta.env.DEV) {
+    console.info(`[pdf] ${pdf.numPages} página(s), ${rows.length} linha(s) extraída(s)`);
+  }
   return rows;
 }
