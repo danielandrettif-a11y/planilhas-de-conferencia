@@ -208,7 +208,7 @@ const Index = () => {
       setPdfRows(rows);
       setPdfSkipped(false);
     } catch (err) {
-      console.error(err);
+      if (import.meta.env.DEV) console.error(err);
       toast({
         title: "Falha ao ler PDF",
         description: "Não foi possível processar o arquivo.",
@@ -259,7 +259,7 @@ const Index = () => {
           }
           parsed.push({ file: f, conta, rows: json });
         } catch (err) {
-          console.error(err);
+          if (import.meta.env.DEV) console.error(err);
           skipped.push(`${f.name} (falha ao ler)`);
         }
       }
@@ -347,7 +347,7 @@ const Index = () => {
         description: `${sheets.length} aba(s) · ${totalNotas} nota(s) exportada(s). Nenhum dado foi armazenado.`,
       });
     } catch (err) {
-      console.error(err);
+      if (import.meta.env.DEV) console.error(err);
       const msg = err instanceof Error ? err.message : "Tente novamente com outro arquivo.";
       toast({
         title: "Erro ao gerar planilha",
