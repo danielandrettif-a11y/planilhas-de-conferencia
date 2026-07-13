@@ -17,7 +17,9 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error("ErrorBoundary caught:", error, info);
+    if (import.meta.env.DEV) {
+      console.error("ErrorBoundary caught:", error, info);
+    }
     this.setState({ error, info });
   }
 
@@ -25,6 +27,7 @@ export class ErrorBoundary extends Component<Props, State> {
     if (!this.state.error) return this.props.children;
 
     const { error, info } = this.state;
+    const isDev = import.meta.env.DEV;
     return (
       <div style={{ minHeight: "100vh", padding: 24, fontFamily: "system-ui, sans-serif", background: "#fff", color: "#111" }}>
         <div style={{ maxWidth: 800, margin: "0 auto" }}>
@@ -32,7 +35,9 @@ export class ErrorBoundary extends Component<Props, State> {
             Algo deu errado ao carregar o app
           </h1>
           <p style={{ fontSize: 14, color: "#555", marginBottom: 16 }}>
-            Copie a mensagem abaixo e envie para diagnosticar o problema.
+            {isDev
+              ? "Copie a mensagem abaixo e envie para diagnosticar o problema."
+              : "Recarregue a página para tentar novamente."}
           </p>
           <button
             onClick={() => window.location.reload()}
@@ -48,6 +53,7 @@ export class ErrorBoundary extends Component<Props, State> {
           >
             Recarregar página
           </button>
+          {isDev && (
           <pre
             style={{
               background: "#f5f5f5",
@@ -66,6 +72,7 @@ ${error.stack ?? ""}
 
 ${info?.componentStack ?? ""}`}
           </pre>
+          )}
         </div>
       </div>
     );
