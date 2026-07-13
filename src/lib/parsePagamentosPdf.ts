@@ -72,6 +72,12 @@ function parseLine(text: string): PagamentoRow | null {
   }
   if (tokens.length === 0) return null;
 
+  // First token is usually the empresa code (all digits, ≤6). Drop it.
+  if (tokens.length >= 2 && /^\d{1,6}$/.test(tokens[0])) {
+    tokens.shift();
+  }
+  if (tokens.length === 0) return null;
+
   let numero = tokens.shift() as string;
   // Reject headers / summary lines.
   if (!/\d/.test(numero)) return null;
