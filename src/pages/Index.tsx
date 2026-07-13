@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import {
   FileSpreadsheet,
@@ -10,7 +10,6 @@ import {
   Sparkles,
   Check,
   FileText,
-  Pencil,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
