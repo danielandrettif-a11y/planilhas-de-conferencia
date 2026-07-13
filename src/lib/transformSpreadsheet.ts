@@ -315,11 +315,65 @@ function formatVencList(dates: Date[]): string {
   return `${short.join(", ")} e ${lastStr}`;
 }
 
+function formatShortDates(dates: Date[]): string {
+  if (dates.length === 0) return "";
+  const sorted = [...dates].sort((a, b) => a.getTime() - b.getTime());
+  const s = sorted.map(
+    (d) => `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`,
+  );
+  if (s.length === 1) return s[0];
+  if (s.length === 2) return `${s[0]} e ${s[1]}`;
+  return `${s.slice(0, -1).join(", ")} e ${s[s.length - 1]}`;
+}
+
+export interface MesConferencia {
+  ano: number;
+  mes: number; // 1-12
+}
+
+function ymIndex(d: Date): number {
+  return d.getFullYear() * 12 + d.getMonth();
+}
+
+function isLastDayOfMonth(d: Date, mes: MesConferencia): boolean {
+  if (d.getFullYear() !== mes.ano || d.getMonth() + 1 !== mes.mes) return false;
+  const last = new Date(mes.ano, mes.mes, 0).getDate();
+  return d.getDate() === last;
+}
+
+// Returns { ok, needsReview } — needsReview is true when match came from a fuzzy rule.
+function matchesTitulo(
+  nfNorm: string,
+  tituloNorm: string,
+): { ok: boolean; needsReview: boolean } {
+  if (!nfNorm || !tituloNorm) return { ok: false, needsReview: false };
+  if (tituloNorm === nfNorm) return { ok: true, needsReview: false };
+  // titulo = nf + digits (parcelas)
+  if (tituloNorm.startsWith(nfNorm)) {
+    const suffix = tituloNorm.slice(nfNorm.length);
+    if (/^\d+$/.test(suffix)) return { ok: true, needsReview: false };
+  }
+  // nf termina com titulo (nf tem prefixo numérico extra)
+  if (nfNorm.length > tituloNorm.length && nfNorm.endsWith(tituloNorm)) {
+    const prefix = nfNorm.slice(0, nfNorm.length - tituloNorm.length);
+    if (/^\d+$/.test(prefix)) return { ok: true, needsReview: true };
+  }
+  // titulo termina com nf (titulo tem prefixo numérico extra)
+  if (tituloNorm.length > nfNorm.length && tituloNorm.endsWith(nfNorm)) {
+    const prefix = tituloNorm.slice(0, tituloNorm.length - nfNorm.length);
+    if (/^\d+$/.test(prefix)) return { ok: true, needsReview: true };
+  }
+  return { ok: false, needsReview: false };
+}
+
 export function applyPagamentosPdf(
   notas: NotaFiscal[],
   pdfRows: PagamentoRow[],
+  opts: { mesConferencia: MesConferencia },
 ): void {
   if (pdfRows.length === 0) return;
+  const mes = opts.mesConferencia;
+  const mesIdx = mes.ano * 12 + (mes.mes - 1);
 
   // Pre-normalize PDF rows.
   const normalized = pdfRows.map((r) => ({
@@ -333,43 +387,58 @@ export function applyPagamentosPdf(
     if (!nfNorm) continue;
     const notaTokens = fornecedorTokens(nota.fornecedor);
 
-    // Find matches: exact number OR title starts with nfNorm and suffix is digits only.
+    let fuzzyMatch = false;
     const matches = normalized.filter((r) => {
       if (!r.numeroNorm) return false;
-      let ok = false;
-      if (r.numeroNorm === nfNorm) ok = true;
-      else if (r.numeroNorm.startsWith(nfNorm)) {
-        const suffix = r.numeroNorm.slice(nfNorm.length);
-        if (/^\d+$/.test(suffix)) ok = true;
-      }
-      if (!ok) return false;
-      // Require supplier overlap.
-      return tokenOverlap(notaTokens, r.tokens) > 0;
+      const m = matchesTitulo(nfNorm, r.numeroNorm);
+      if (!m.ok) return false;
+      if (tokenOverlap(notaTokens, r.tokens) === 0) return false;
+      if (m.needsReview) fuzzyMatch = true;
+      return true;
     });
 
     if (matches.length === 0) continue;
 
-    // Se qualquer parcela ainda está sem Data baixa → NF ainda tem parcelas em aberto.
+    // Split parcelas por status vs mês de conferência.
     const hasPending = matches.some((r) => r.dataBaixa == null);
-    let text: string;
-    if (hasPending) {
-      text = "Próximas parcelas ainda sem programação";
-    } else {
-      const dates = matches
-        .map((r) => r.dataBaixa as Date)
-        .filter((d): d is Date => d != null);
-      text = formatVencList(dates);
+    const displayDates: Date[] = [];
+    let lastDayFlag = false;
+    for (const r of matches) {
+      if (!r.dataBaixa) continue;
+      if (isLastDayOfMonth(r.dataBaixa, mes)) {
+        displayDates.push(r.dataBaixa);
+        lastDayFlag = true;
+        continue;
+      }
+      // Passada = mesmo mês ou anterior → oculta.
+      if (ymIndex(r.dataBaixa) <= mesIdx) continue;
+      displayDates.push(r.dataBaixa);
     }
 
-    // Conferência: soma do valor total das parcelas vs FALTA PAGAR.
+    let text: string;
+    if (hasPending && displayDates.length === 0) {
+      text = "Próximas parcelas ainda sem programação";
+    } else if (hasPending) {
+      text = `${formatShortDates(displayDates)} e próximas ainda sem programação`;
+    } else if (displayDates.length === 0) {
+      // Todas pagas e todas em meses passados — nada a mostrar.
+      text = "";
+    } else {
+      text = formatVencList(displayDates);
+    }
+
+    // Conferência: soma do valor total de TODAS as parcelas casadas vs FALTA PAGAR.
     const somaTotal = matches.reduce(
       (s, r) => s + (r.valorTitulo || r.valorAberto || 0),
       0,
     );
-    if (Math.abs(somaTotal - nota.faltaPagar) > 0.01) {
+    const sumMismatch = Math.abs(somaTotal - nota.faltaPagar) > 0.01;
+    if ((sumMismatch || fuzzyMatch || lastDayFlag) && text && !/\(conferir\)/i.test(text)) {
       text += " (conferir)";
+    } else if ((sumMismatch || fuzzyMatch) && !text) {
+      text = "(conferir)";
     }
-    nota.informacoes = text;
+    if (text) nota.informacoes = text;
   }
 }
 
