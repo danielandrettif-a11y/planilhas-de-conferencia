@@ -1,46 +1,46 @@
-## Ajustes na coluna INFORMAÇÕES
+## Ajustes na interface do Conversor
 
-### 1. Mix de parcelas pagas + em aberto
-Em `applyPagamentosPdf` (src/lib/transformSpreadsheet.ts):
-- Todas com `dataBaixa` → lista todas as datas (mantém atual).
-- Nenhuma com `dataBaixa` → `"Próximas parcelas ainda sem programação"`.
-- **Misto** → datas baixadas + `" e próximas ainda sem programação"`.
-  - Ex.: `"11/06 e próximas ainda sem programação"`.
+### 1. Stepper — travar avanço e desligar o "brilho" das etapas inativas
+Arquivo: `src/pages/Index.tsx` (componente `Stepper`)
 
-### 2. Seletor de mês de conferência
-Novo passo no wizard (entre "Mês anterior" e "Planilhas brutas"):
-- `<Select>` com meses (~36 opções, ±1 ano do atual), default = mês atual, obrigatório.
+- Só permitir clique em uma etapa se **todas as anteriores estiverem concluídas** (`done[1] && done[2] && ...`). Etapas futuras bloqueadas ganham `cursor-not-allowed` e opacidade reduzida.
+- A "bolinha" verde preenchida (círculo com check em `bg-primary`) só aparece na etapa **atualmente ativa**. Etapas já concluídas mas fora do foco mostram um check discreto (contorno + check em cor `muted-foreground`), sem preenchimento verde. Etapas pendentes continuam com bolinha cinza numerada.
 
-**Filtro em `applyPagamentosPdf`:**
-- Baixa "passada" = `dataBaixa` em mês **anterior ou igual** ao mês selecionado → some da lista exibida.
-- **Exceção — último dia do mês selecionado:** se `dataBaixa` for exatamente o último dia do mês de conferência (ex.: 30/06 quando confere 06/2026), **mantém a data na lista** e força sufixo `" (conferir)"` no texto (compensação bancária real cai no 1º dia útil do mês seguinte, precisa revisão manual).
-- Descartes são apenas visuais: as parcelas filtradas continuam contando na soma de conferência (item 3).
-- Pós-filtro, se sobra só aberto → frase padrão; só datas → lista; misto → regra do item 1.
+### 2. Favicon com referência de planilha sendo convertida
+- Gerar um ícone 512×512 (via `imagegen`) representando duas planilhas com uma seta de conversão entre elas, em verde/branco combinando com o tema.
+- Salvar em `public/favicon.png`, remover `public/favicon.ico` e atualizar `<link rel="icon">` no `index.html`.
 
-### 3. Flag `(conferir)` por soma
-- Comparar `Σ valorTitulo` (fallback `valorAberto`) de **todas** as parcelas casadas, inclusive filtradas.
-- Diferença > R$ 0,01 → acrescenta `" (conferir)"` ao final.
-- Se já houver `(conferir)` (por item 2 ou 4), não duplicar.
+### 3. Nova frase de subtítulo
+Arquivo: `src/pages/Index.tsx` (hero, linha ~404)
+Trocar por: **"Envie o export do Alterdata e receba uma planilha padronizada com fornecedor, nota fiscal e valores organizados em segundos."**
 
-### 4. Match de NF com dígitos extras via fornecedor
-Ampliar casamento em `applyPagamentosPdf` (sempre exigindo overlap de fornecedor):
-1. `titulo === nf` (exato).
-2. `titulo` começa com `nf` + só dígitos (parcelas — já existe).
-3. **Novo:** `nf` termina com `titulo` e o prefixo removido é só dígitos (ex.: NF `2600001002519`, título `1002519`).
-4. **Novo:** `titulo` termina com `nf` e o prefixo removido é só dígitos.
+### 4. Nome do arquivo gerado
+Arquivo: `src/pages/Index.tsx` (função `onGenerate`)
 
-Matches vindos das regras 3 ou 4 → sufixo `" (conferir)"` no texto (sem duplicar).
+- Se houver planilha do mês anterior (`prevFile`): usar o nome dela como base, substituir a referência de mês pela do `mesConferencia` e acrescentar ` (Conferir)`.
+  - Regex tenta substituir padrões tipo `mês 04`, `mes 4`, `abril`, `04-2025`, `04.2025` pelo mês selecionado (nome por extenso + ano, ex.: `maio 2025`).
+  - Se não encontrar padrão, apenas concatena ` - <mês por extenso> <ano> (Conferir)`.
+- Sem planilha do mês anterior: `planilhas <mês por extenso> <ano> (Conferir).xlsx`.
 
-### Detalhes técnicos
+Exemplo: `Empresa X abril 2025.xlsx` + mês 5/2025 → `Empresa X maio 2025 (Conferir).xlsx`.
 
-**src/lib/transformSpreadsheet.ts**
-- `applyPagamentosPdf(notas, pdfRows, { mesConferencia: { ano, mes } })`.
-- Helpers: `isPast(baixa, mes)`, `isLastDayOfMonth(baixa, mes)`, `matchesTitulo(nfNorm, tituloNorm) → { ok, needsReview }`.
-- Formatador de datas com sufixo `" e próximas ainda sem programação"`.
+### 5. Subtítulo do cabeçalho
+Arquivo: `src/pages/Index.tsx` (header, linha ~374)
 
-**src/pages/Index.tsx**
-- Estado `mesConferencia` (`"YYYY-MM"`), default mês atual.
-- Novo card no wizard com `<Select>` (Mês anterior → **Mês de conferência** → Brutas → PDF → Gerar).
-- Passar `mesConferencia` para `applyPagamentosPdf` em `handleGenerate`.
+Adicionar embaixo do título `Conversor de Planilhas` (ou substituir a linha `ALTERDATA · CONFERÊNCIA`) o texto: **"Conversor de Planilhas de fornecedores para os Cont's"** como tagline visível. Manter compacto e responsivo (esconder em telas muito pequenas se necessário).
 
-Sem alterações no parser de PDF, layout do Excel, ou demais regras.
+### 6. Animações de scroll reveal
+Arquivo novo: `src/hooks/useRevealOnScroll.ts` — hook que usa `IntersectionObserver` para adicionar a classe `is-visible` quando o elemento entra na viewport.
+
+Arquivo: `src/index.css` — adicionar utilitária:
+```css
+.reveal { opacity: 0; transform: translateY(24px); transition: opacity .7s ease, transform .7s ease; }
+.reveal.is-visible { opacity: 1; transform: translateY(0); }
+```
+
+Arquivo: `src/pages/Index.tsx` — aplicar `className="reveal"` + `ref` do hook nos blocos principais (hero, aviso de privacidade, stepper, cada `StepCard` renderizado, card final de gerar, footer). Elementos já visíveis no primeiro paint (hero) recebem `is-visible` imediato para evitar flash.
+
+### Notas técnicas
+- Nenhuma alteração na lógica de transformação (`transformSpreadsheet.ts`, `parsePagamentosPdf.ts`).
+- Processamento continua 100% local.
+- Favicon gerado com o modelo `fast` (não é texto, não precisa de premium).
