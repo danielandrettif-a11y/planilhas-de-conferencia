@@ -879,17 +879,25 @@ function Stepper({
     { id: 4, label: "PDF" },
     { id: 5, label: "Gerar" },
   ];
+  // Só libera clique na etapa N se todas as anteriores (1..N-1) estiverem concluídas.
+  const canReach = (id: StepId): boolean => {
+    for (let k = 1; k < id; k++) {
+      if (!done[k as 1 | 2 | 3 | 4]) return false;
+    }
+    return true;
+  };
   return (
     <ol className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
       {steps.map((s, i) => {
         const isCurrent = current === s.id;
-        const isDone = s.id < current || (s.id !== 5 && done[s.id as 1 | 2 | 3 | 4]);
-        const canJump = s.id < current || isDone;
+        const isDone = s.id !== 5 && done[s.id as 1 | 2 | 3 | 4];
+        const canJump = !isCurrent && canReach(s.id);
+        const disabled = !isCurrent && !canJump;
         return (
           <li key={s.id} className="flex items-center gap-2 sm:gap-3">
             <button
               type="button"
-              disabled={!canJump && !isCurrent}
+              disabled={disabled}
               onClick={() => canJump && setStep(s.id)}
               className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-mono transition-colors ${
                 isCurrent
@@ -897,18 +905,18 @@ function Stepper({
                   : isDone
                   ? "border-border/60 bg-card/60 text-foreground hover:border-primary/40"
                   : "border-border/40 bg-transparent text-muted-foreground"
-              }`}
+              } ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
             >
               <span
                 className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] ${
-                  isDone
-                    ? "bg-primary text-primary-foreground"
-                    : isCurrent
+                  isCurrent
                     ? "bg-primary/20 text-primary"
+                    : isDone
+                    ? "bg-transparent border border-border/60 text-muted-foreground"
                     : "bg-muted text-muted-foreground"
                 }`}
               >
-                {isDone ? <Check className="h-3 w-3" /> : s.id}
+                {isCurrent ? s.id : isDone ? <Check className="h-3 w-3" /> : s.id}
               </span>
               {s.label}
             </button>
