@@ -740,6 +740,7 @@ const Index = () => {
             </div>
           </div>
         )}
+        </div>
 
         <footer className="pt-8 pb-4 text-center text-xs text-muted-foreground font-mono">
           feito para conferência interna
