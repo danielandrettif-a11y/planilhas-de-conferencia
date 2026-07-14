@@ -32,6 +32,7 @@ import {
   type SheetInput,
 } from "@/lib/transformSpreadsheet";
 import { parsePagamentosPdf, type PagamentoRow } from "@/lib/parsePagamentosPdf";
+import { useRevealOnScroll } from "@/hooks/useRevealOnScroll";
 
 const ACCEPTED = [".xlsx", ".xls"];
 
@@ -79,6 +80,62 @@ const MES_OPTIONS = buildMesOptions();
 function defaultMes(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function mesLabelExtenso(value: string): string {
+  const [y, m] = value.split("-").map(Number);
+  if (!y || !m) return "";
+  return `${MESES_NOMES[m - 1]} ${y}`;
+}
+
+const MESES_REGEX = new RegExp(
+  "(" + MESES_NOMES.join("|") + ")(?:[\\s._-]*(?:de[\\s._-]*)?(\\d{4}|\\d{2}))?",
+  "i",
+);
+
+function buildOutputFilename(
+  prevName: string | null,
+  rawFiles: RawFile[],
+  mesConferencia: string,
+): string {
+  const mesExt = mesLabelExtenso(mesConferencia);
+  const [, mmStr] = mesConferencia.split("-");
+  const suffix = ` (Conferir).xlsx`;
+
+  const trySubstitute = (name: string): string | null => {
+    const base = name.replace(/\.(xlsx|xls)$/i, "");
+    // 1) "abril 2025" / "abril de 2025" / "abril"
+    if (MESES_REGEX.test(base)) {
+      return base.replace(MESES_REGEX, mesExt);
+    }
+    // 2) "mês 04" / "mes 4"
+    const mMes = base.match(/m[êe]s[\s._-]*\d{1,2}/i);
+    if (mMes) {
+      return base.replace(mMes[0], `mês ${mmStr}`);
+    }
+    // 3) "04-2025" / "04.2025" / "04_2025"
+    const mNum = base.match(/\b(\d{1,2})[._-](\d{4})\b/);
+    if (mNum) {
+      return base.replace(mNum[0], mesExt);
+    }
+    return null;
+  };
+
+  if (prevName) {
+    const sub = trySubstitute(prevName);
+    if (sub) return `${sub}${suffix}`;
+    const base = prevName.replace(/\.(xlsx|xls)$/i, "");
+    return `${base} - ${mesExt}${suffix}`;
+  }
+
+  if (rawFiles.length === 1) {
+    const only = rawFiles[0].file.name;
+    const sub = trySubstitute(only);
+    if (sub) return `${sub}${suffix}`;
+    const base = only.replace(/\.(xlsx|xls)$/i, "");
+    return `${base} - ${mesExt}${suffix}`;
+  }
+  return `planilhas ${mesExt}${suffix}`;
 }
 
 const Index = () => {
@@ -330,14 +387,14 @@ const Index = () => {
         return String(a.conta).localeCompare(String(b.conta));
       });
       const blob = await buildXlsx(sheets);
-      const base =
-        rawFiles.length === 1
-          ? rawFiles[0].file.name.replace(/\.(xlsx|xls)$/i, "")
-          : "planilhas";
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${base}-formatada.xlsx`;
+      a.download = buildOutputFilename(
+        prevFile?.name ?? null,
+        rawFiles,
+        mesConferencia,
+      );
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -361,6 +418,10 @@ const Index = () => {
 
   const goNext = (target: StepId) => setStep(target);
 
+  const revealPrivacy = useRevealOnScroll<HTMLDivElement>();
+  const revealStepper = useRevealOnScroll<HTMLDivElement>();
+  const revealCard = useRevealOnScroll<HTMLDivElement>();
+
   return (
     <div className="min-h-screen">
       <header className="border-b border-border/60 backdrop-blur-xl bg-background/40 sticky top-0 z-10">
@@ -373,6 +434,9 @@ const Index = () => {
             <div>
               <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground font-mono">Alterdata · Conferência</p>
               <h1 className="text-lg font-semibold tracking-tight">Conversor de Planilhas</h1>
+              <p className="hidden sm:block text-[11px] text-muted-foreground mt-0.5">
+                Conversor de Planilhas de fornecedores para os Cont's
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -386,7 +450,7 @@ const Index = () => {
       </header>
 
       <main className="container mx-auto max-w-4xl px-4 py-14 space-y-10">
-        <section className="text-center space-y-5 max-w-2xl mx-auto">
+        <section className="reveal is-visible text-center space-y-5 max-w-2xl mx-auto">
           <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-card/40 px-3 py-1 text-xs text-muted-foreground font-mono">
             <Sparkles className="h-3 w-3 text-primary" />
             zero uploads · zero storage
@@ -401,22 +465,26 @@ const Index = () => {
             </span>
           </h2>
           <p className="text-muted-foreground text-base leading-relaxed">
-            Envie o export do Alterdata e receba uma planilha padronizada com fornecedor, nota fiscal e valores em segundos.
+            Envie o export do Alterdata e receba uma planilha padronizada com fornecedor, nota fiscal e valores organizados em segundos.
           </p>
         </section>
 
-        <div className="flex items-start gap-3 rounded-2xl border border-accent/40 bg-accent/20 backdrop-blur px-5 py-4 text-sm text-accent-foreground">
+        <div ref={revealPrivacy} className="reveal flex items-start gap-3 rounded-2xl border border-accent/40 bg-accent/20 backdrop-blur px-5 py-4 text-sm text-accent-foreground">
           <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
           <p className="text-muted-foreground">
             Seus arquivos são processados localmente no navegador. O conteúdo não é enviado nem armazenado em servidores.
           </p>
         </div>
 
-        <Stepper
-          current={step}
-          setStep={setStep}
-          done={{ 1: step1Done, 2: step2Done, 3: step3Done, 4: step4Done }}
-        />
+        <div ref={revealStepper} className="reveal">
+          <Stepper
+            current={step}
+            setStep={setStep}
+            done={{ 1: step1Done, 2: step2Done, 3: step3Done, 4: step4Done }}
+          />
+        </div>
+
+        <div ref={revealCard} className="reveal" key={`step-${step}`}>
 
         {step === 1 && (
           <StepCard
@@ -672,6 +740,7 @@ const Index = () => {
             </div>
           </div>
         )}
+        </div>
 
         <footer className="pt-8 pb-4 text-center text-xs text-muted-foreground font-mono">
           feito para conferência interna
@@ -810,17 +879,25 @@ function Stepper({
     { id: 4, label: "PDF" },
     { id: 5, label: "Gerar" },
   ];
+  // Só libera clique na etapa N se todas as anteriores (1..N-1) estiverem concluídas.
+  const canReach = (id: StepId): boolean => {
+    for (let k = 1; k < id; k++) {
+      if (!done[k as 1 | 2 | 3 | 4]) return false;
+    }
+    return true;
+  };
   return (
     <ol className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
       {steps.map((s, i) => {
         const isCurrent = current === s.id;
-        const isDone = s.id < current || (s.id !== 5 && done[s.id as 1 | 2 | 3 | 4]);
-        const canJump = s.id < current || isDone;
+        const isDone = s.id !== 5 && done[s.id as 1 | 2 | 3 | 4];
+        const canJump = !isCurrent && canReach(s.id);
+        const disabled = !isCurrent && !canJump;
         return (
           <li key={s.id} className="flex items-center gap-2 sm:gap-3">
             <button
               type="button"
-              disabled={!canJump && !isCurrent}
+              disabled={disabled}
               onClick={() => canJump && setStep(s.id)}
               className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-mono transition-colors ${
                 isCurrent
@@ -828,18 +905,18 @@ function Stepper({
                   : isDone
                   ? "border-border/60 bg-card/60 text-foreground hover:border-primary/40"
                   : "border-border/40 bg-transparent text-muted-foreground"
-              }`}
+              } ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
             >
               <span
                 className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] ${
-                  isDone
-                    ? "bg-primary text-primary-foreground"
-                    : isCurrent
+                  isCurrent
                     ? "bg-primary/20 text-primary"
+                    : isDone
+                    ? "bg-transparent border border-border/60 text-muted-foreground"
                     : "bg-muted text-muted-foreground"
                 }`}
               >
-                {isDone ? <Check className="h-3 w-3" /> : s.id}
+                {isCurrent ? s.id : isDone ? <Check className="h-3 w-3" /> : s.id}
               </span>
               {s.label}
             </button>
