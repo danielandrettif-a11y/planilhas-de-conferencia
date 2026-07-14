@@ -418,6 +418,10 @@ const Index = () => {
 
   const goNext = (target: StepId) => setStep(target);
 
+  const revealPrivacy = useRevealOnScroll<HTMLDivElement>();
+  const revealStepper = useRevealOnScroll<HTMLDivElement>();
+  const revealCard = useRevealOnScroll<HTMLDivElement>();
+
   return (
     <div className="min-h-screen">
       <header className="border-b border-border/60 backdrop-blur-xl bg-background/40 sticky top-0 z-10">
@@ -430,6 +434,9 @@ const Index = () => {
             <div>
               <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground font-mono">Alterdata · Conferência</p>
               <h1 className="text-lg font-semibold tracking-tight">Conversor de Planilhas</h1>
+              <p className="hidden sm:block text-[11px] text-muted-foreground mt-0.5">
+                Conversor de Planilhas de fornecedores para os Cont's
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -443,7 +450,7 @@ const Index = () => {
       </header>
 
       <main className="container mx-auto max-w-4xl px-4 py-14 space-y-10">
-        <section className="text-center space-y-5 max-w-2xl mx-auto">
+        <section className="reveal is-visible text-center space-y-5 max-w-2xl mx-auto">
           <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-card/40 px-3 py-1 text-xs text-muted-foreground font-mono">
             <Sparkles className="h-3 w-3 text-primary" />
             zero uploads · zero storage
@@ -458,22 +465,26 @@ const Index = () => {
             </span>
           </h2>
           <p className="text-muted-foreground text-base leading-relaxed">
-            Envie o export do Alterdata e receba uma planilha padronizada com fornecedor, nota fiscal e valores em segundos.
+            Envie o export do Alterdata e receba uma planilha padronizada com fornecedor, nota fiscal e valores organizados em segundos.
           </p>
         </section>
 
-        <div className="flex items-start gap-3 rounded-2xl border border-accent/40 bg-accent/20 backdrop-blur px-5 py-4 text-sm text-accent-foreground">
+        <div ref={revealPrivacy} className="reveal flex items-start gap-3 rounded-2xl border border-accent/40 bg-accent/20 backdrop-blur px-5 py-4 text-sm text-accent-foreground">
           <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
           <p className="text-muted-foreground">
             Seus arquivos são processados localmente no navegador. O conteúdo não é enviado nem armazenado em servidores.
           </p>
         </div>
 
-        <Stepper
-          current={step}
-          setStep={setStep}
-          done={{ 1: step1Done, 2: step2Done, 3: step3Done, 4: step4Done }}
-        />
+        <div ref={revealStepper} className="reveal">
+          <Stepper
+            current={step}
+            setStep={setStep}
+            done={{ 1: step1Done, 2: step2Done, 3: step3Done, 4: step4Done }}
+          />
+        </div>
+
+        <div ref={revealCard} className="reveal" key={`step-${step}`}>
 
         {step === 1 && (
           <StepCard
