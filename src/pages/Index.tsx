@@ -32,6 +32,7 @@ import {
   type SheetInput,
 } from "@/lib/transformSpreadsheet";
 import { parsePagamentosPdf, type PagamentoRow } from "@/lib/parsePagamentosPdf";
+import { useRevealOnScroll } from "@/hooks/useRevealOnScroll";
 
 const ACCEPTED = [".xlsx", ".xls"];
 
@@ -79,6 +80,62 @@ const MES_OPTIONS = buildMesOptions();
 function defaultMes(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function mesLabelExtenso(value: string): string {
+  const [y, m] = value.split("-").map(Number);
+  if (!y || !m) return "";
+  return `${MESES_NOMES[m - 1]} ${y}`;
+}
+
+const MESES_REGEX = new RegExp(
+  "(" + MESES_NOMES.join("|") + ")(?:[\\s._-]*(?:de[\\s._-]*)?(\\d{4}|\\d{2}))?",
+  "i",
+);
+
+function buildOutputFilename(
+  prevName: string | null,
+  rawFiles: RawFile[],
+  mesConferencia: string,
+): string {
+  const mesExt = mesLabelExtenso(mesConferencia);
+  const [, mmStr] = mesConferencia.split("-");
+  const suffix = ` (Conferir).xlsx`;
+
+  const trySubstitute = (name: string): string | null => {
+    const base = name.replace(/\.(xlsx|xls)$/i, "");
+    // 1) "abril 2025" / "abril de 2025" / "abril"
+    if (MESES_REGEX.test(base)) {
+      return base.replace(MESES_REGEX, mesExt);
+    }
+    // 2) "mês 04" / "mes 4"
+    const mMes = base.match(/m[êe]s[\s._-]*\d{1,2}/i);
+    if (mMes) {
+      return base.replace(mMes[0], `mês ${mmStr}`);
+    }
+    // 3) "04-2025" / "04.2025" / "04_2025"
+    const mNum = base.match(/\b(\d{1,2})[._-](\d{4})\b/);
+    if (mNum) {
+      return base.replace(mNum[0], mesExt);
+    }
+    return null;
+  };
+
+  if (prevName) {
+    const sub = trySubstitute(prevName);
+    if (sub) return `${sub}${suffix}`;
+    const base = prevName.replace(/\.(xlsx|xls)$/i, "");
+    return `${base} - ${mesExt}${suffix}`;
+  }
+
+  if (rawFiles.length === 1) {
+    const only = rawFiles[0].file.name;
+    const sub = trySubstitute(only);
+    if (sub) return `${sub}${suffix}`;
+    const base = only.replace(/\.(xlsx|xls)$/i, "");
+    return `${base} - ${mesExt}${suffix}`;
+  }
+  return `planilhas ${mesExt}${suffix}`;
 }
 
 const Index = () => {
@@ -330,14 +387,14 @@ const Index = () => {
         return String(a.conta).localeCompare(String(b.conta));
       });
       const blob = await buildXlsx(sheets);
-      const base =
-        rawFiles.length === 1
-          ? rawFiles[0].file.name.replace(/\.(xlsx|xls)$/i, "")
-          : "planilhas";
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${base}-formatada.xlsx`;
+      a.download = buildOutputFilename(
+        prevFile?.name ?? null,
+        rawFiles,
+        mesConferencia,
+      );
       document.body.appendChild(a);
       a.click();
       a.remove();
