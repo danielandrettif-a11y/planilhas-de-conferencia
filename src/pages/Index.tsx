@@ -419,7 +419,6 @@ const Index = () => {
 
   const goNext = (target: StepId) => setStep(target);
 
-  const revealPrivacy = useRevealOnScroll<HTMLDivElement>();
   const revealStepper = useRevealOnScroll<HTMLDivElement>();
   const revealCard = useRevealOnScroll<HTMLDivElement>();
 
