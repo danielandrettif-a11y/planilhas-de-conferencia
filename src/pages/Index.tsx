@@ -33,6 +33,7 @@ import {
 } from "@/lib/transformSpreadsheet";
 import { parsePagamentosPdf, type PagamentoRow } from "@/lib/parsePagamentosPdf";
 import { useRevealOnScroll } from "@/hooks/useRevealOnScroll";
+import { ScrollVideoHero } from "@/components/ScrollVideoHero";
 
 const ACCEPTED = [".xlsx", ".xls"];
 
@@ -449,32 +450,36 @@ const Index = () => {
         </div>
       </header>
 
-      <main className="container mx-auto max-w-4xl px-4 py-14 space-y-10">
-        <section className="reveal is-visible text-center space-y-5 max-w-2xl mx-auto">
-          <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-card/40 px-3 py-1 text-xs text-muted-foreground font-mono">
-            <Sparkles className="h-3 w-3 text-primary" />
-            zero uploads · zero storage
+      <ScrollVideoHero src="/video/hero.mp4">
+        <div className="container mx-auto max-w-4xl px-4 space-y-8">
+          <section className="text-center space-y-5 max-w-2xl mx-auto">
+            <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-card/60 backdrop-blur px-3 py-1 text-xs text-muted-foreground font-mono">
+              <Sparkles className="h-3 w-3 text-primary" />
+              zero uploads · zero storage
+            </div>
+            <h2 className="text-4xl sm:text-5xl font-semibold tracking-tight leading-[1.05] drop-shadow-sm">
+              Transforme sua planilha bruta em{" "}
+              <span
+                className="bg-clip-text text-transparent"
+                style={{ backgroundImage: "var(--gradient-primary)" }}
+              >
+                relatório formatado
+              </span>
+            </h2>
+            <p className="text-foreground/80 text-base leading-relaxed">
+              Envie o export do Alterdata e receba uma planilha padronizada com fornecedor, nota fiscal e valores organizados em segundos.
+            </p>
+          </section>
+          <div className="flex items-start gap-3 rounded-2xl border border-accent/40 bg-accent/30 backdrop-blur px-5 py-4 text-sm text-accent-foreground max-w-2xl mx-auto">
+            <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+            <p className="text-foreground/80">
+              Seus arquivos são processados localmente no navegador. O conteúdo não é enviado nem armazenado em servidores.
+            </p>
           </div>
-          <h2 className="text-4xl sm:text-5xl font-semibold tracking-tight leading-[1.05]">
-            Transforme sua planilha bruta em{" "}
-            <span
-              className="bg-clip-text text-transparent"
-              style={{ backgroundImage: "var(--gradient-primary)" }}
-            >
-              relatório formatado
-            </span>
-          </h2>
-          <p className="text-muted-foreground text-base leading-relaxed">
-            Envie o export do Alterdata e receba uma planilha padronizada com fornecedor, nota fiscal e valores organizados em segundos.
-          </p>
-        </section>
-
-        <div ref={revealPrivacy} className="reveal flex items-start gap-3 rounded-2xl border border-accent/40 bg-accent/20 backdrop-blur px-5 py-4 text-sm text-accent-foreground">
-          <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-          <p className="text-muted-foreground">
-            Seus arquivos são processados localmente no navegador. O conteúdo não é enviado nem armazenado em servidores.
-          </p>
         </div>
+      </ScrollVideoHero>
+
+      <main className="container mx-auto max-w-4xl px-4 py-14 space-y-10">
 
         <div ref={revealStepper} className="reveal">
           <Stepper
