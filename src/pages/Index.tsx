@@ -4,7 +4,6 @@ import {
   FileSpreadsheet,
   Upload,
   Download,
-  ShieldCheck,
   X,
   Loader2,
   Sparkles,
