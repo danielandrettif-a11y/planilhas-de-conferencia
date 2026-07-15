@@ -89,7 +89,7 @@ export function ScrollVideoHero({ src, children, scrubVh = 200 }: Props) {
               "linear-gradient(180deg, hsl(var(--background) / 0.55) 0%, hsl(var(--background) / 0.35) 40%, hsl(var(--background) / 0.85) 100%)",
           }}
         />
-        <div className="relative z-10 h-full w-full overflow-y-auto">
+        <div className="relative z-10 flex h-full w-full items-center justify-center">
           {children}
         </div>
       </div>
