@@ -11,16 +11,16 @@ export interface PagamentoRow {
   dataBaixa: Date | null;
 }
 
-function parseBrDate(s: string): Date | null {
-  const m = s.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (!m) return null;
-  return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+function parseBrDate(value: string): Date | null {
+  const match = value.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!match) return null;
+  const date = new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function parseBrNumber(s: string): number {
-  const t = s.replace(/\s/g, "").replace(/\./g, "").replace(",", ".");
-  const n = Number(t);
-  return isNaN(n) ? 0 : n;
+function parseBrNumber(value: string): number {
+  const parsed = Number(value.replace(/\s/g, "").replace(/\./g, "").replace(",", "."));
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 interface TextItem {
@@ -33,92 +33,71 @@ interface TextItem {
 function groupByLine(items: TextItem[]): TextItem[][] {
   const sorted = [...items].sort((a, b) => b.y - a.y || a.x - b.x);
   const lines: TextItem[][] = [];
-  const TOL = 3;
-  for (const it of sorted) {
+  const tolerance = 3;
+  for (const item of sorted) {
     const last = lines[lines.length - 1];
-    if (last && Math.abs(last[0].y - it.y) <= TOL) last.push(it);
-    else lines.push([it]);
+    if (last && Math.abs(last[0].y - item.y) <= tolerance) last.push(item);
+    else lines.push([item]);
   }
-  for (const l of lines) l.sort((a, b) => a.x - b.x);
+  for (const line of lines) line.sort((a, b) => a.x - b.x);
   return lines;
 }
 
 function joinLine(line: TextItem[]): string {
-  return line.map((i) => i.str).join(" ").replace(/\s+/g, " ").trim();
+  return line.map((item) => item.str).join(" ").replace(/\s+/g, " ").trim();
 }
 
-// Regex: prefix, valorTitulo, valorAberto, optional dataBaixa
 const LINE_RE =
   /^(.*?)\s+(\d{1,3}(?:\.\d{3})*,\d{2})\s+(\d{1,3}(?:\.\d{3})*,\d{2})(?:\s+(\d{2}\/\d{2}\/\d{4}))?\s*$/;
 
-// Token is "date-like" if it contains only digits and slashes (covers scrambled
-// interleaved dates like "11/030/220/0174/2026" and normal "22/04/2026").
-function isDateLikeToken(t: string): boolean {
-  return /^[\d/]+$/.test(t) && /\//.test(t);
+function isDateLikeToken(value: string): boolean {
+  return /^[\d/]+$/.test(value) && value.includes("/");
 }
 
 function parseLine(text: string): PagamentoRow | null {
-  const m = text.match(LINE_RE);
-  if (!m) return null;
-  let prefix = m[1].trim();
-  const valorTitulo = parseBrNumber(m[2]);
-  const valorAberto = parseBrNumber(m[3]);
-  const dataBaixa = m[4] ? parseBrDate(m[4]) : null;
+  const match = text.match(LINE_RE);
+  if (!match) return null;
 
-  const tokens = prefix.split(/\s+/);
-  // Remove trailing date-like tokens (the 2-4 date columns before values).
-  while (tokens.length > 0 && isDateLikeToken(tokens[tokens.length - 1])) {
-    tokens.pop();
-  }
-  if (tokens.length === 0) return null;
+  const tokens = match[1].trim().split(/\s+/);
+  while (tokens.length > 0 && isDateLikeToken(tokens[tokens.length - 1])) tokens.pop();
+  if (tokens.length < 2) return null;
 
-  // First token is usually the empresa code (all digits, ≤6). Drop it.
-  if (tokens.length >= 2 && /^\d{1,6}$/.test(tokens[0])) {
-    tokens.shift();
-  }
-  if (tokens.length === 0) return null;
+  if (/^\d{1,6}$/.test(tokens[0])) tokens.shift();
+  if (tokens.length < 2) return null;
 
-  let numero = tokens.shift() as string;
-  // Reject headers / summary lines.
+  let numero = tokens.shift() ?? "";
   if (!/\d/.test(numero)) return null;
-  // Strip "0006" empresa prefix if present (leading zeros + short digits).
-  numero = numero.replace(/^0+/, "");
-  const digits = numero.replace(/\D+/g, "");
-  if (digits.length < 2) return null;
+  numero = numero.replace(/^0+/, "") || "0";
 
   const fornecedor = tokens.join(" ").trim();
-  if (!fornecedor) return null;
-  if (/filtro/i.test(fornecedor)) return null;
+  if (!fornecedor || /filtro/i.test(fornecedor)) return null;
 
-  return { numero, fornecedor, valorTitulo, valorAberto, dataBaixa };
+  return {
+    numero,
+    fornecedor,
+    valorTitulo: parseBrNumber(match[2]),
+    valorAberto: parseBrNumber(match[3]),
+    dataBaixa: match[4] ? parseBrDate(match[4]) : null,
+  };
 }
 
 export async function parsePagamentosPdf(file: File): Promise<PagamentoRow[]> {
-  const buf = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  const buffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
   const rows: PagamentoRow[] = [];
 
-  for (let p = 1; p <= pdf.numPages; p++) {
-    const page = await pdf.getPage(p);
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+    const page = await pdf.getPage(pageNumber);
     const content = await page.getTextContent();
     const items: TextItem[] = [];
-    for (const it of content.items as Array<{
-      str: string;
-      transform: number[];
-      width: number;
-    }>) {
-      if (!it.str) continue;
-      items.push({
-        str: it.str,
-        x: it.transform[4],
-        y: it.transform[5],
-        w: it.width ?? 0,
-      });
+
+    for (const item of content.items as Array<{ str: string; transform: number[]; width: number }>) {
+      if (!item.str) continue;
+      items.push({ str: item.str, x: item.transform[4], y: item.transform[5], w: item.width ?? 0 });
     }
-    const lines = groupByLine(items);
-    for (const line of lines) {
-      const text = joinLine(line);
-      const row = parseLine(text);
+
+    for (const line of groupByLine(items)) {
+      const row = parseLine(joinLine(line));
       if (row) rows.push(row);
     }
   }
