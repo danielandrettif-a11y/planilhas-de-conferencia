@@ -10,658 +10,350 @@ export interface NotaFiscal {
   valorNF: number;
   faltaPagar: number;
   informacoes: string;
+  motivosConferencia: string[];
 }
+
+export interface TransformResult { notas: NotaFiscal[] }
+export interface SheetInput { conta: string; result: TransformResult }
+export interface MesConferencia { ano: number; mes: number }
 
 const HIST_KEYS = ["Descrição histórico", "Descricao historico", "DescriÃ§Ã£o histÃ³rico"];
 const VALOR_KEYS = ["Valor"];
 const DATA_KEYS = ["Data"];
+const PREV_FORNECEDOR_KEYS = ["FORNECEDOR", "Fornecedor"];
+const PREV_NOTA_KEYS = ["NOTA FISCAL", "Nota Fiscal", "NotaFiscal", "NF", "N.F.", "N F", "Nº NF", "NUMERO NF", "NÚMERO NF", "Nota"];
+const PREV_INFO_KEYS = ["INFORMAÇÕES", "INFORMACOES", "Informações", "Informacoes"];
 
 function findKey(row: SheetRow, candidates: string[]): string | null {
   const keys = Object.keys(row);
-  for (const c of candidates) {
-    const found = keys.find((k) => k.trim().toLowerCase() === c.trim().toLowerCase());
-    if (found) return found;
+  for (const candidate of candidates) {
+    const exact = keys.find((key) => key.trim().toLowerCase() === candidate.trim().toLowerCase());
+    if (exact) return exact;
   }
-  // fallback: partial match
-  for (const c of candidates) {
-    const found = keys.find((k) =>
-      k.trim().toLowerCase().includes(c.trim().toLowerCase()),
-    );
-    if (found) return found;
+  for (const candidate of candidates) {
+    const partial = keys.find((key) => key.trim().toLowerCase().includes(candidate.trim().toLowerCase()));
+    if (partial) return partial;
   }
   return null;
 }
 
-function toNumber(v: unknown): number {
-  if (typeof v === "number") return v;
-  if (v == null || v === "") return 0;
-  const s = String(v).trim().replace(/\s/g, "");
-  // Brazilian format: 1.234,56 or -1.234,56
-  const normalized = s.replace(/\./g, "").replace(",", ".");
-  const n = Number(normalized);
-  return isNaN(n) ? 0 : n;
-}
-
-// Remove leading CNPJ/CPF-like fragments: "33.246.073 " or "12.345.678/0001 "
-function cleanFornecedor(name: string): string {
-  let s = name.trim();
-  s = s.replace(/^\d{1,3}(?:\.\d{3})+(?:[-/]\d+)*\s+/, "");
-  s = s.replace(/^\d{3}\.\d{3}\.\d{3}(?:-\d{2})?\s+/, "");
-  // Strip trailing bank/description noise: "... REFERENTE SERVIÇOS PRESTADOS ...",
-  // "... REF. ...", "... NOTA FISCAL ...", "... INTERNET MÊS ...".
-  s = s.replace(
-    /\s+(REFERENTE|REF\.?|NOTA\s+FISCAL|INTERNET\s+M[ÊE]S|CONFORME|PAGAMENTO)\b.*$/i,
-    "",
-  );
-  // Collapse extra whitespace.
-  s = s.replace(/\s+/g, " ").trim();
-  // Drop trailing punctuation.
-  s = s.replace(/[\s.,;:-]+$/, "").trim();
-  return s;
-}
-
-interface Parsed {
-  isNF: boolean;
-  numero: string | null;
-  fornecedor: string;
-}
-
-function parseDescricao(desc: string): Parsed {
-  const s = desc.trim();
-  const upper = s.toUpperCase();
-
-  // Nota fiscal principal — aceita "VALOR NF - 2219 - X", "VALOR NF 2219-X", "VALOR NF 2219 X"
-  const mNF = s.match(/^VALOR\s+NF\b[\s-]*(.+)$/i);
-  if (mNF) {
-    const rest = mNF[1].trim();
-    const m = rest.match(/^(\d+)\s*[-–]?\s*(.+)$/);
-    if (m) {
-      return {
-        isNF: true,
-        numero: m[1],
-        fornecedor: cleanFornecedor(m[2]),
-      };
-    }
-    return { isNF: true, numero: null, fornecedor: cleanFornecedor(rest) };
-  }
-
-  // Linha negativa relacionada — extrair número da NF
-  // 1) Padrão explícito com "NF"
-  let numero: string | null = null;
-  const m1 = upper.match(/NF\s*-\s*(\d+)/);
-  if (m1) numero = m1[1];
-  else {
-    const m2 = upper.match(/NF\s+(\d+)/);
-    if (m2) numero = m2[1];
-  }
-  // 2) Padrões de retenção comuns: "S/ 1234", "S/NF 1234", "SOBRE 1234", "REF 1234", "REF. NF 1234"
-  if (!numero) {
-    const mRet = upper.match(/(?:S\s*\/\s*(?:NF\s*)?|SOBRE\s+|REF\.?\s*(?:NF\s*)?)(\d+)/);
-    if (mRet) numero = mRet[1];
-  }
-  return { isNF: false, numero, fornecedor: "" };
-}
-
-// Extrai números candidatos a NF de uma descrição, ignorando datas, percentuais e valores monetários.
-function extractCandidateNumbers(desc: string): string[] {
-  let s = desc;
-  // remove datas dd/mm/aaaa ou dd/mm/aa
-  s = s.replace(/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g, " ");
-  // remove percentuais 12% / 12,5%
-  s = s.replace(/\b\d+(?:[.,]\d+)?\s*%/g, " ");
-  // remove valores monetários (contém vírgula ou ponto decimal) ex: 1.234,56 / 123,45 / 1234.56
-  s = s.replace(/\b\d{1,3}(?:\.\d{3})+(?:,\d+)?\b/g, " ");
-  s = s.replace(/\b\d+[.,]\d+\b/g, " ");
-  const nums = s.match(/\b\d{3,}\b/g) ?? [];
-  return nums;
+function toNumber(value: unknown): number {
+  if (typeof value === "number") return value;
+  if (value == null || value === "") return 0;
+  const parsed = Number(String(value).trim().replace(/\s/g, "").replace(/\./g, "").replace(",", "."));
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function removeAccents(value: string): string {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
 
-function extractDevolucaoRefNumero(desc: string): string | null {
-  const normalized = removeAccents(desc).toUpperCase();
-  const match = normalized.match(/\bREF\.?\s+DEVOLUCAO\s+NF\s*-?\s*(\d+)\b/);
-  return match?.[1] ?? null;
+function normNota(value: unknown): string {
+  if (value == null) return "";
+  return String(value).trim().replace(/\.0+$/, "").replace(/\D+/g, "").replace(/^0+/, "");
 }
 
-function uniqueKnownMatches(matches: string[], byNumero: Map<string, NotaFiscal>): string[] {
-  return Array.from(new Set(matches.filter((n) => byNumero.has(n))));
+function normFornecedor(value: unknown): string {
+  if (value == null) return "";
+  return removeAccents(String(value)).toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
-function removeOneDigitVariants(numero: string): string[] {
-  const variants: string[] = [];
-  for (let i = 0; i < numero.length; i++) {
-    variants.push(numero.slice(0, i) + numero.slice(i + 1));
-  }
-  return variants;
-}
+const STOP_WORDS = new Set([
+  "ltda", "me", "epp", "sa", "eireli", "cia", "de", "da", "do", "das", "dos", "com", "e",
+  "servicos", "servico", "medicos", "medico", "medica", "medicas", "assistencia", "saude",
+  "comercio", "comercial", "industria", "industrial", "produtos", "produto", "distribuidora",
+  "transportes", "transporte", "brasil", "nacional", "importacao", "exportacao", "solucoes",
+  "tecnologia", "sistemas", "engenharia", "construcao", "hospitalar", "hospital", "clinica",
+  "clinicas", "diagnostico", "farmaceutica", "farmaceuticos", "informatica",
+]);
 
-function findSafeNumeroVariant(
-  numero: string | null,
-  desc: string,
-  byNumero: Map<string, NotaFiscal>,
-): string | null {
-  if (!numero || byNumero.has(numero)) return numero;
-
-  const matches: string[] = [];
-  for (const known of byNumero.keys()) {
-    const suffix = numero.slice(known.length);
-    if (numero.startsWith(known) && /^0+\d*$/.test(suffix)) {
-      matches.push(known);
-    }
-  }
-  matches.push(...uniqueKnownMatches(removeOneDigitVariants(numero), byNumero));
-
-  const descTokens = fornecedorTokens(desc);
-  const supplierMatches = Array.from(new Set(matches)).filter((n) => {
-    const nota = byNumero.get(n);
-    if (!nota) return false;
-    return tokenOverlap(descTokens, fornecedorTokens(nota.fornecedor)) > 0;
-  });
-
-  return supplierMatches.length === 1 ? supplierMatches[0] : null;
-}
-
-export interface TransformResult {
-  notas: NotaFiscal[];
-}
-
-// ============ Previous month lookup ============
-
-const PREV_FORNECEDOR_KEYS = ["FORNECEDOR", "Fornecedor"];
-const PREV_NOTA_KEYS = ["NOTA FISCAL", "Nota Fiscal", "NotaFiscal", "NF", "N.F.", "N F", "Nº NF", "NUMERO NF", "NÚMERO NF", "Nota"];
-const PREV_INFO_KEYS = ["INFORMAÇÕES", "INFORMACOES", "Informações", "Informacoes"];
-
-function normNota(v: unknown): string {
-  if (v == null) return "";
-  let s = String(v).trim();
-  s = s.replace(/\.0+$/, "");
-  // Remove qualquer caractere que não seja dígito (pontos iniciais, espaços internos,
-  // hifens, etc.) — o número da NF é sempre puramente numérico.
-  s = s.replace(/\D+/g, "");
-  // Remove zeros à esquerda.
-  s = s.replace(/^0+/, "");
-  return s;
-}
-
-function normFornecedor(v: unknown): string {
-  if (v == null) return "";
-  return String(v)
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9 ]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function fornecedorTokens(v: unknown): Set<string> {
-  const stop = new Set([
-    "ltda", "me", "epp", "sa", "s", "a", "eireli", "cia", "e", "de", "da", "do",
-    "das", "dos", "the", "com",
-    // Termos genéricos que causam falsos matches entre fornecedores distintos.
-    "servicos", "servico", "servicoss", "medicos", "medico", "medica", "medicas",
-    "comercio", "comercial", "industria", "industrial", "produtos", "produto",
-    "distribuidora", "distribuidor", "transportes", "transporte", "alimentos",
-    "brasil", "brasileira", "nacional", "importacao", "exportacao", "solucoes",
-    "tecnologia", "sistemas", "engenharia", "construcao", "hospitalar",
-    "hospital", "clinica", "clinicas", "diagnostico", "diagnosticos",
-    "farmaceutica", "farmaceuticos", "quimica", "quimicos", "informatica",
-  ]);
-  return new Set(
-    normFornecedor(v)
-      .split(" ")
-      .filter((t) => t.length >= 3 && !stop.has(t)),
-  );
+function fornecedorTokens(value: unknown): Set<string> {
+  return new Set(normFornecedor(value).split(" ").filter((token) => token.length >= 2 && !STOP_WORDS.has(token)));
 }
 
 function tokenOverlap(a: Set<string>, b: Set<string>): number {
-  let n = 0;
-  for (const t of a) if (b.has(t)) n++;
-  return n;
+  let count = 0;
+  for (const token of a) if (b.has(token)) count++;
+  return count;
 }
 
-function formatInfoValue(v: unknown): string {
-  if (v == null) return "";
-  if (v instanceof Date) {
-    const d = String(v.getDate()).padStart(2, "0");
-    const m = String(v.getMonth() + 1).padStart(2, "0");
-    return `${d}/${m}/${v.getFullYear()}`;
+function supplierScore(a: unknown, b: unknown): number {
+  const na = normFornecedor(a);
+  const nb = normFornecedor(b);
+  if (!na || !nb) return 0;
+  if (na === nb) return 100;
+  if (na.includes(nb) || nb.includes(na)) return 80;
+  const ta = fornecedorTokens(a);
+  const tb = fornecedorTokens(b);
+  const overlap = tokenOverlap(ta, tb);
+  const required = Math.max(1, Math.min(2, Math.min(ta.size, tb.size)));
+  return overlap >= required ? overlap * 10 : 0;
+}
+
+function cleanFornecedor(name: string): string {
+  return name.trim()
+    .replace(/^\d{1,3}(?:\.\d{3})+(?:[-/]\d+)*\s+/, "")
+    .replace(/^\d{3}\.\d{3}\.\d{3}(?:-\d{2})?\s+/, "")
+    .replace(/\s+(REFERENTE|REF\.?|NOTA\s+FISCAL|INTERNET\s+M[ÊE]S|CONFORME|PAGAMENTO)\b.*$/i, "")
+    .replace(/\s+/g, " ").replace(/[\s.,;:-]+$/, "").trim();
+}
+
+interface Parsed { isNF: boolean; numero: string | null; fornecedor: string }
+
+function parseDescricao(desc: string): Parsed {
+  const value = desc.trim();
+  const upper = value.toUpperCase();
+  const nf = value.match(/^VALOR\s+NF\b[\s-]*(.+)$/i);
+  if (nf) {
+    const rest = nf[1].trim();
+    const match = rest.match(/^(\d+)\s*[-–]?\s*(.+)$/);
+    if (match) return { isNF: true, numero: match[1], fornecedor: cleanFornecedor(match[2]) };
+    return { isNF: true, numero: null, fornecedor: cleanFornecedor(rest) };
   }
-  if (typeof v === "number") {
-    // Excel date serial heuristic: values between 20000 (1954) and 80000 (2119) with reasonable range
-    if (v > 20000 && v < 80000 && Number.isInteger(v)) {
-      const utc = Math.round((v - 25569) * 86400 * 1000);
-      const dt = new Date(utc);
-      const d = String(dt.getDate()).padStart(2, "0");
-      const m = String(dt.getMonth() + 1).padStart(2, "0");
-      return `${d}/${m}/${dt.getFullYear()}`;
-    }
-    return String(v);
+  const explicit = upper.match(/NF\s*(?:-|N[ºO.]?\s*)?\s*(\d+)/)
+    ?? upper.match(/(?:S\s*\/\s*(?:NF\s*)?|SOBRE\s+|REF\.?\s*(?:NF\s*)?)(\d+)/);
+  return { isNF: false, numero: explicit?.[1] ?? null, fornecedor: "" };
+}
+
+function extractCandidateNumbers(desc: string): string[] {
+  const cleaned = desc
+    .replace(/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g, " ")
+    .replace(/\b\d+(?:[.,]\d+)?\s*%/g, " ")
+    .replace(/\b\d{1,3}(?:\.\d{3})+(?:,\d+)?\b/g, " ")
+    .replace(/\b\d+[.,]\d+\b/g, " ");
+  return cleaned.match(/\b\d+\b/g) ?? [];
+}
+
+function addReason(nota: NotaFiscal, reason: string): void {
+  if (reason && !nota.motivosConferencia.includes(reason)) nota.motivosConferencia.push(reason);
+}
+
+function markConferir(nota: NotaFiscal): void {
+  if (!/\(conferir\)/i.test(nota.informacoes)) {
+    nota.informacoes = nota.informacoes ? `${nota.informacoes} (conferir)` : "(conferir)";
   }
-  return String(v).trim();
 }
 
-export interface PrevEntry {
-  fornecedor: string;
-  tokens: Set<string>;
-  info: string;
+export interface PrevEntry { fornecedor: string; tokens: Set<string>; info: string }
+
+function formatInfoValue(value: unknown): string {
+  if (value == null) return "";
+  if (value instanceof Date) return `${String(value.getDate()).padStart(2, "0")}/${String(value.getMonth() + 1).padStart(2, "0")}/${value.getFullYear()}`;
+  if (typeof value === "number" && value > 20000 && value < 80000 && Number.isInteger(value)) {
+    const date = new Date(Math.round((value - 25569) * 86400 * 1000));
+    return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
+  }
+  return String(value).trim();
 }
 
-export function buildPreviousInfoMap(
-  rows: SheetRow[],
-): Map<string, PrevEntry[]> {
+export function buildPreviousInfoMap(rows: SheetRow[]): Map<string, PrevEntry[]> {
   const map = new Map<string, PrevEntry[]>();
   if (rows.length === 0) return map;
-  const sample = rows[0];
-  const fornKey = findKey(sample, PREV_FORNECEDOR_KEYS);
-  const notaKey = findKey(sample, PREV_NOTA_KEYS);
-  const infoKey = findKey(sample, PREV_INFO_KEYS);
-  if (!fornKey || !notaKey || !infoKey) {
-    throw new Error(
-      "A planilha do mês anterior precisa conter as colunas FORNECEDOR, NOTA FISCAL e INFORMAÇÕES.",
-    );
-  }
+  const fornKey = findKey(rows[0], PREV_FORNECEDOR_KEYS);
+  const notaKey = findKey(rows[0], PREV_NOTA_KEYS);
+  const infoKey = findKey(rows[0], PREV_INFO_KEYS);
+  if (!fornKey || !notaKey || !infoKey) throw new Error("A planilha do mês anterior precisa conter as colunas FORNECEDOR, NOTA FISCAL e INFORMAÇÕES.");
   for (const row of rows) {
     const nota = normNota(row[notaKey]);
-    const forn = row[fornKey];
-    const info = row[infoKey];
-    if (!nota || forn == null || String(forn).trim() === "") continue;
-    const infoStr = formatInfoValue(info);
-    if (!infoStr) continue;
-    const entry: PrevEntry = {
-      fornecedor: String(forn),
-      tokens: fornecedorTokens(forn),
-      info: infoStr,
-    };
-    const arr = map.get(nota);
-    if (arr) arr.push(entry);
-    else map.set(nota, [entry]);
+    const fornecedor = row[fornKey];
+    const info = formatInfoValue(row[infoKey]);
+    if (!nota || !String(fornecedor ?? "").trim() || !info) continue;
+    const entry = { fornecedor: String(fornecedor), tokens: fornecedorTokens(fornecedor), info };
+    map.set(nota, [...(map.get(nota) ?? []), entry]);
   }
   return map;
 }
 
-export function applyPreviousInfo(
-  notas: NotaFiscal[],
-  prevMap: Map<string, PrevEntry[]>,
-): void {
+export function applyPreviousInfo(notas: NotaFiscal[], prevMap: Map<string, PrevEntry[]>): void {
   for (const nota of notas) {
-    const candidates = prevMap.get(normNota(nota.notaFiscal));
-    if (!candidates || candidates.length === 0) continue;
-    // Sempre exigir match por fornecedor (via overlap de tokens) além da NF.
-    // Se o fornecedor não bater, deixar em branco — a NF pode ser nova (mês atual)
-    // e coincidir por acaso com uma NF antiga de outro fornecedor.
-    const genTokens = fornecedorTokens(nota.fornecedor);
-    let chosen: PrevEntry | null = null;
-    let bestScore = 0;
-    for (const c of candidates) {
-      const score = tokenOverlap(genTokens, c.tokens);
-      if (score > bestScore) {
-        bestScore = score;
-        chosen = c;
-      }
-    }
-    if (chosen) nota.informacoes = chosen.info;
+    const candidates = prevMap.get(normNota(nota.notaFiscal)) ?? [];
+    const ranked = candidates.map((candidate) => ({ candidate, score: supplierScore(nota.fornecedor, candidate.fornecedor) }))
+      .filter((item) => item.score > 0).sort((a, b) => b.score - a.score);
+    if (ranked.length > 0 && (ranked.length === 1 || ranked[0].score > ranked[1].score)) nota.informacoes = ranked[0].candidate.info;
   }
 }
 
-// ============ Pagamentos PDF matching ============
-
-function formatVencList(dates: Date[]): string {
-  if (dates.length === 0) return "";
-  const sorted = [...dates].sort((a, b) => a.getTime() - b.getTime());
-  const dd = (d: Date) => String(d.getDate()).padStart(2, "0");
-  const mm = (d: Date) => String(d.getMonth() + 1).padStart(2, "0");
-  const yyyy = (d: Date) => String(d.getFullYear());
-  const short = sorted.slice(0, -1).map((d) => `${dd(d)}/${mm(d)}`);
-  const last = sorted[sorted.length - 1];
-  const lastStr = `${dd(last)}/${mm(last)}/${yyyy(last)}`;
-  if (short.length === 0) return lastStr;
-  if (short.length === 1) return `${short[0]} e ${lastStr}`;
-  return `${short.join(", ")} e ${lastStr}`;
+function dateKey(date: Date): string { return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`; }
+function uniqueDates(dates: Date[]): Date[] { return [...new Map(dates.map((date) => [dateKey(date), date])).values()]; }
+function formatDateList(dates: Date[]): string {
+  const sorted = uniqueDates(dates).sort((a, b) => a.getTime() - b.getTime());
+  if (sorted.length === 0) return "";
+  const pieces = sorted.map((date, index) => {
+    const base = `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}`;
+    return index === sorted.length - 1 ? `${base}/${date.getFullYear()}` : base;
+  });
+  if (pieces.length === 1) return pieces[0];
+  if (pieces.length === 2) return `${pieces[0]} e ${pieces[1]}`;
+  return `${pieces.slice(0, -1).join(", ")} e ${pieces[pieces.length - 1]}`;
+}
+function ymIndex(date: Date): number { return date.getFullYear() * 12 + date.getMonth(); }
+function isLastDay(date: Date, mes: MesConferencia): boolean {
+  return date.getFullYear() === mes.ano && date.getMonth() + 1 === mes.mes && date.getDate() === new Date(mes.ano, mes.mes, 0).getDate();
 }
 
-function formatShortDates(dates: Date[]): string {
-  if (dates.length === 0) return "";
-  const sorted = [...dates].sort((a, b) => a.getTime() - b.getTime());
-  const s = sorted.map(
-    (d) => `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`,
-  );
-  if (s.length === 1) return s[0];
-  if (s.length === 2) return `${s[0]} e ${s[1]}`;
-  return `${s.slice(0, -1).join(", ")} e ${s[s.length - 1]}`;
+function titleMatch(nf: string, title: string): { exact: boolean; fuzzy: boolean } {
+  if (!nf || !title) return { exact: false, fuzzy: false };
+  if (nf === title) return { exact: true, fuzzy: false };
+  if (nf.length < 3) return { exact: false, fuzzy: false };
+  if (title.startsWith(nf) && /^\d+$/.test(title.slice(nf.length))) return { exact: false, fuzzy: true };
+  if (nf.length > title.length && nf.endsWith(title) && /^\d+$/.test(nf.slice(0, nf.length - title.length))) return { exact: false, fuzzy: true };
+  if (title.length > nf.length && title.endsWith(nf) && /^\d+$/.test(title.slice(0, title.length - nf.length))) return { exact: false, fuzzy: true };
+  return { exact: false, fuzzy: false };
 }
 
-export interface MesConferencia {
-  ano: number;
-  mes: number; // 1-12
-}
-
-function ymIndex(d: Date): number {
-  return d.getFullYear() * 12 + d.getMonth();
-}
-
-function isLastDayOfMonth(d: Date, mes: MesConferencia): boolean {
-  if (d.getFullYear() !== mes.ano || d.getMonth() + 1 !== mes.mes) return false;
-  const last = new Date(mes.ano, mes.mes, 0).getDate();
-  return d.getDate() === last;
-}
-
-// Returns { ok, needsReview } — needsReview is true when match came from a fuzzy rule.
-function matchesTitulo(
-  nfNorm: string,
-  tituloNorm: string,
-): { ok: boolean; needsReview: boolean } {
-  if (!nfNorm || !tituloNorm) return { ok: false, needsReview: false };
-  if (tituloNorm === nfNorm) return { ok: true, needsReview: false };
-  // titulo = nf + digits (parcelas)
-  if (tituloNorm.startsWith(nfNorm)) {
-    const suffix = tituloNorm.slice(nfNorm.length);
-    if (/^\d+$/.test(suffix)) return { ok: true, needsReview: false };
-  }
-  // nf termina com titulo (nf tem prefixo numérico extra)
-  if (nfNorm.length > tituloNorm.length && nfNorm.endsWith(tituloNorm)) {
-    const prefix = nfNorm.slice(0, nfNorm.length - tituloNorm.length);
-    if (/^\d+$/.test(prefix)) return { ok: true, needsReview: true };
-  }
-  // titulo termina com nf (titulo tem prefixo numérico extra)
-  if (tituloNorm.length > nfNorm.length && tituloNorm.endsWith(nfNorm)) {
-    const prefix = tituloNorm.slice(0, tituloNorm.length - nfNorm.length);
-    if (/^\d+$/.test(prefix)) return { ok: true, needsReview: true };
-  }
-  return { ok: false, needsReview: false };
-}
-
-export function applyPagamentosPdf(
-  notas: NotaFiscal[],
-  pdfRows: PagamentoRow[],
-  opts: { mesConferencia: MesConferencia },
-): void {
+export function applyPagamentosPdf(notas: NotaFiscal[], pdfRows: PagamentoRow[], opts: { mesConferencia: MesConferencia }): void {
   if (pdfRows.length === 0) return;
-  const mes = opts.mesConferencia;
-  const mesIdx = mes.ano * 12 + (mes.mes - 1);
-
-  // Pre-normalize PDF rows.
-  const normalized = pdfRows.map((r) => ({
-    ...r,
-    numeroNorm: normNota(r.numero),
-    tokens: fornecedorTokens(r.fornecedor),
-  }));
+  const mesIdx = opts.mesConferencia.ano * 12 + opts.mesConferencia.mes - 1;
+  const normalized = pdfRows.map((row) => ({ ...row, numeroNorm: normNota(row.numero) }));
 
   for (const nota of notas) {
-    const nfNorm = normNota(nota.notaFiscal);
-    if (!nfNorm) continue;
-    const notaTokens = fornecedorTokens(nota.fornecedor);
+    const nf = normNota(nota.notaFiscal);
+    const candidates = normalized.map((row) => ({ row, match: titleMatch(nf, row.numeroNorm), score: supplierScore(nota.fornecedor, row.fornecedor) }))
+      .filter((item) => (item.match.exact || item.match.fuzzy) && item.score > 0);
+    const exact = candidates.filter((item) => item.match.exact);
+    const selected = exact.length > 0 ? exact : candidates.filter((item) => item.match.fuzzy);
+    if (selected.length === 0) continue;
 
-    let fuzzyMatch = false;
-    const matches = normalized.filter((r) => {
-      if (!r.numeroNorm) return false;
-      const m = matchesTitulo(nfNorm, r.numeroNorm);
-      if (!m.ok) return false;
-      if (tokenOverlap(notaTokens, r.tokens) === 0) return false;
-      if (m.needsReview) fuzzyMatch = true;
-      return true;
-    });
+    const uniqueRows = [...new Map(selected.map(({ row }) => [`${row.numeroNorm}|${normFornecedor(row.fornecedor)}|${row.valorTitulo}|${row.valorAberto}|${row.dataBaixa ? dateKey(row.dataBaixa) : ""}`, row])).values()];
+    if (uniqueRows.length < selected.length) addReason(nota, "O PDF continha lançamentos duplicados; as duplicidades foram ignoradas.");
+    if (exact.length === 0) addReason(nota, "O título foi localizado por correspondência aproximada de número; confirme o vínculo manualmente.");
 
-    if (matches.length === 0) continue;
-
-    // Split parcelas por status vs mês de conferência.
-    const hasPending = matches.some((r) => r.dataBaixa == null);
+    const hasPending = uniqueRows.some((row) => row.dataBaixa == null);
     const displayDates: Date[] = [];
     let lastDayFlag = false;
-    for (const r of matches) {
-      if (!r.dataBaixa) continue;
-      if (isLastDayOfMonth(r.dataBaixa, mes)) {
-        displayDates.push(r.dataBaixa);
-        lastDayFlag = true;
-        continue;
-      }
-      // Passada = mesmo mês ou anterior → oculta.
-      if (ymIndex(r.dataBaixa) <= mesIdx) continue;
-      displayDates.push(r.dataBaixa);
+    for (const row of uniqueRows) {
+      if (!row.dataBaixa) continue;
+      if (isLastDay(row.dataBaixa, opts.mesConferencia)) { displayDates.push(row.dataBaixa); lastDayFlag = true; continue; }
+      if (ymIndex(row.dataBaixa) > mesIdx) displayDates.push(row.dataBaixa);
     }
 
-    let text: string;
-    if (hasPending && displayDates.length === 0) {
-      text = "Próximas parcelas ainda sem programação";
-    } else if (hasPending) {
-      text = `${formatShortDates(displayDates)} e próximas ainda sem programação`;
-    } else if (displayDates.length === 0) {
-      // Todas pagas e todas em meses passados — nada a mostrar.
-      text = "";
-    } else {
-      text = formatVencList(displayDates);
-    }
+    let text = "";
+    if (hasPending && displayDates.length === 0) text = "Próximas parcelas ainda sem programação";
+    else if (hasPending) text = `${formatDateList(displayDates).replace(/\/\d{4}$/, "")} e próximas ainda sem programação`;
+    else if (displayDates.length > 0) text = formatDateList(displayDates);
 
-    // Conferência: soma do valor total de TODAS as parcelas casadas vs FALTA PAGAR.
-    const somaTotal = matches.reduce(
-      (s, r) => s + (r.valorTitulo || r.valorAberto || 0),
-      0,
-    );
-    // Só sinalizamos divergência de soma quando TODAS as parcelas já foram pagas
-    // (não há pendentes). Se ainda há parcelas em aberto, o "falta pagar" da
-    // planilha reflete apenas o restante, e a soma total do PDF vai divergir
-    // naturalmente — não é erro.
-    const sumMismatch =
-      !hasPending && Math.abs(somaTotal - nota.faltaPagar) > 0.01;
-    const flagConferir = sumMismatch || fuzzyMatch || lastDayFlag;
-    if (flagConferir && text && !/\(conferir\)/i.test(text)) {
-      text += " (conferir)";
-    } else if (flagConferir && !text) {
-      text = "(conferir)";
-    }
+    const sumTitle = uniqueRows.reduce((sum, row) => sum + row.valorTitulo, 0);
+    const sumOpen = uniqueRows.reduce((sum, row) => sum + row.valorAberto, 0);
+    if (Math.abs(sumTitle - nota.valorNF) > 0.02) addReason(nota, `Valor dos títulos no PDF (R$ ${sumTitle.toFixed(2)}) diferente do VALOR DA NF (R$ ${nota.valorNF.toFixed(2)}).`);
+    if (hasPending && Math.abs(sumOpen - nota.faltaPagar) > 0.02) addReason(nota, `Valor aberto no PDF (R$ ${sumOpen.toFixed(2)}) diferente do FALTA PAGAR (R$ ${nota.faltaPagar.toFixed(2)}).`);
+    if (lastDayFlag) addReason(nota, "Pagamento realizado no último dia do mês; verificar a compensação bancária no período seguinte.");
+
     if (text) nota.informacoes = text;
+    if (nota.motivosConferencia.length > 0) markConferir(nota);
   }
+}
+
+function chooseTaxTarget(numero: string, desc: string, byNumero: Map<string, NotaFiscal[]>): NotaFiscal | null {
+  const candidates = byNumero.get(numero) ?? [];
+  if (candidates.length === 1) return candidates[0];
+  if (candidates.length === 0) return null;
+  const ranked = candidates.map((nota) => ({ nota, score: supplierScore(desc, nota.fornecedor) })).sort((a, b) => b.score - a.score);
+  if (ranked[0].score > 0 && (ranked.length === 1 || ranked[0].score > ranked[1].score)) return ranked[0].nota;
+  for (const candidate of candidates) {
+    addReason(candidate, `NF ${numero} repetida entre fornecedores; o imposto/abatimento não foi vinculado por falta de identificação segura.`);
+    markConferir(candidate);
+  }
+  return null;
 }
 
 export function transformRows(rows: SheetRow[]): TransformResult {
   if (rows.length === 0) throw new Error("Planilha vazia.");
-  const sample = rows[0];
-  const histKey = findKey(sample, HIST_KEYS);
-  const valorKey = findKey(sample, VALOR_KEYS);
-  const dataKey = findKey(sample, DATA_KEYS);
-
+  const histKey = findKey(rows[0], HIST_KEYS);
+  const valorKey = findKey(rows[0], VALOR_KEYS);
+  const dataKey = findKey(rows[0], DATA_KEYS);
   if (!histKey) throw new Error('Coluna "Descrição histórico" não encontrada.');
   if (!valorKey) throw new Error('Coluna "Valor" não encontrada.');
   if (!dataKey) throw new Error('Coluna "Data" não encontrada.');
 
   const notas: NotaFiscal[] = [];
-  const byNumero = new Map<string, NotaFiscal>();
-
-  // Primeira passagem: coletar notas fiscais
+  const byNumero = new Map<string, NotaFiscal[]>();
   for (const row of rows) {
     const desc = String(row[histKey] ?? "");
-    if (!desc.trim()) continue;
     const parsed = parseDescricao(desc);
-    if (!parsed.isNF) continue;
-    const rawValor = toNumber(row[valorKey]);
-    // Linha "VALOR NF" com valor negativo é devolução/abatimento — não é NF nova.
-    // Será tratada na segunda passagem como retenção.
-    if (rawValor < 0) continue;
-    const valor = Math.abs(rawValor);
+    const rawValue = toNumber(row[valorKey]);
+    if (!parsed.isNF || rawValue < 0) continue;
     const nota: NotaFiscal = {
       data: (row[dataKey] as Date | string | number | null) ?? null,
       fornecedor: parsed.fornecedor,
       notaFiscal: parsed.numero ?? "",
-      valorNF: valor,
-      faltaPagar: valor,
+      valorNF: Math.abs(rawValue),
+      faltaPagar: Math.abs(rawValue),
       informacoes: "",
+      motivosConferencia: [],
     };
     notas.push(nota);
-    if (parsed.numero) byNumero.set(parsed.numero, nota);
+    if (parsed.numero) byNumero.set(parsed.numero, [...(byNumero.get(parsed.numero) ?? []), nota]);
   }
+  if (notas.length === 0) throw new Error('Nenhuma linha com "VALOR NF -" foi encontrada no arquivo.');
 
-  if (notas.length === 0) {
-    throw new Error('Nenhuma linha com "VALOR NF -" foi encontrada no arquivo.');
-  }
-
-  // Segunda passagem: abater negativos
-  for (const row of rows) {
+  const appliedRows = new Set<number>();
+  rows.forEach((row, index) => {
     const desc = String(row[histKey] ?? "");
-    if (!desc.trim()) continue;
-    const valor = toNumber(row[valorKey]);
-    if (valor >= 0) continue;
+    const value = toNumber(row[valorKey]);
+    if (!desc.trim() || value >= 0 || appliedRows.has(index)) return;
     const parsed = parseDescricao(desc);
-    let numero = extractDevolucaoRefNumero(desc) ?? parsed.numero;
-    // Se for uma linha "VALOR NF" negativa (devolução), o primeiro número é o da
-    // própria devolução — ignoramos e procuramos a NF referenciada no texto.
-    if (parsed.isNF && !extractDevolucaoRefNumero(desc)) numero = null;
-    // 3) Fallback: procurar um único número na descrição que bata com NF conhecida
-    if (!numero) {
-      const candidates = extractCandidateNumbers(desc);
-      const matches = Array.from(new Set(candidates.filter((n) => byNumero.has(n))));
-      if (matches.length === 1) {
-        numero = matches[0];
-      } else if (matches.length > 1) {
-        // desempate por fornecedor: descrição contém parte do nome do fornecedor
-        const upperDesc = desc.toUpperCase();
-        const scored = matches.filter((n) => {
-          const forn = (byNumero.get(n)?.fornecedor ?? "").toUpperCase();
-          if (!forn) return false;
-          const firstWord = forn.split(/\s+/)[0];
-          return firstWord.length >= 3 && upperDesc.includes(firstWord);
-        });
-        if (scored.length === 1) numero = scored[0];
-      }
+    const numbers = parsed.numero ? [parsed.numero] : extractCandidateNumbers(desc);
+    const known = [...new Set(numbers.filter((number) => byNumero.has(number)))];
+    let target: NotaFiscal | null = null;
+    if (known.length === 1) target = chooseTaxTarget(known[0], desc, byNumero);
+    else if (known.length > 1) {
+      const possibilities = known.flatMap((number) => (byNumero.get(number) ?? []).map((nota) => ({ nota, score: supplierScore(desc, nota.fornecedor) })));
+      possibilities.sort((a, b) => b.score - a.score);
+      if (possibilities[0]?.score > 0 && possibilities[0].score > (possibilities[1]?.score ?? -1)) target = possibilities[0].nota;
     }
-    numero = findSafeNumeroVariant(numero, desc, byNumero);
-    if (!numero) continue;
-    const nota = byNumero.get(numero);
-    if (!nota) continue;
-    nota.faltaPagar += valor; // valor é negativo, então subtrai
-  }
-
+    if (!target) return;
+    target.faltaPagar += value;
+    appliedRows.add(index);
+  });
   return { notas };
 }
 
-function toJsDate(v: unknown): Date | null {
-  if (v instanceof Date) return v;
-  if (typeof v === "number") {
-    // Excel serial
-    const utc = Math.round((v - 25569) * 86400 * 1000);
-    return new Date(utc);
-  }
-  if (typeof v === "string" && v.trim()) {
-    // dd/mm/yyyy
-    const m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
-    if (m) {
-      const yy = m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3]);
-      return new Date(yy, Number(m[2]) - 1, Number(m[1]));
-    }
-    const d = new Date(v);
-    if (!isNaN(d.getTime())) return d;
+function toJsDate(value: unknown): Date | null {
+  if (value instanceof Date) return value;
+  if (typeof value === "number") return new Date(Math.round((value - 25569) * 86400 * 1000));
+  if (typeof value === "string" && value.trim()) {
+    const br = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+    if (br) return new Date(br[3].length === 2 ? 2000 + Number(br[3]) : Number(br[3]), Number(br[2]) - 1, Number(br[1]));
+    const parsed = new Date(value); if (!Number.isNaN(parsed.getTime())) return parsed;
   }
   return null;
 }
 
-export interface SheetInput {
-  conta: string;
-  result: TransformResult;
-}
-
-function sanitizeSheetName(name: string): string {
-  // Excel sheet name rules: max 31 chars, no []:*?/\
-  return name.replace(/[\[\]:*?\/\\]/g, "_").slice(0, 31) || "Sheet";
-}
+function sanitizeSheetName(name: string): string { return name.replace(/[\[\]:*?/\\]/g, "_").slice(0, 31) || "Sheet"; }
 
 function populateSheet(ws: ExcelJS.Worksheet, result: TransformResult): void {
   ws.columns = [
-    { header: "DATA", key: "data", width: 14 },
-    { header: "FORNECEDOR", key: "fornecedor", width: 45 },
-    { header: "NOTA FISCAL", key: "nota", width: 15 },
-    { header: "VALOR DA NF", key: "valor", width: 18 },
-    { header: "FALTA PAGAR", key: "falta", width: 18 },
-    { header: "INFORMAÇÕES", key: "info", width: 60 },
+    { header: "DATA", key: "data", width: 14 }, { header: "FORNECEDOR", key: "fornecedor", width: 45 },
+    { header: "NOTA FISCAL", key: "nota", width: 15 }, { header: "VALOR DA NF", key: "valor", width: 18 },
+    { header: "FALTA PAGAR", key: "falta", width: 18 }, { header: "INFORMAÇÕES", key: "info", width: 60 },
+    { header: "MOTIVO DA CONFERÊNCIA", key: "motivo", width: 65 },
   ];
-
-  // Header style
-  const headerRow = ws.getRow(1);
-  headerRow.height = 22;
-  headerRow.eachCell((cell) => {
-    cell.fill = {
-      type: "pattern",
-      pattern: "solid",
-      fgColor: { argb: "FF374151" },
-    };
-    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
-    cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
-    cell.border = {
-      top: { style: "thin", color: { argb: "FF000000" } },
-      left: { style: "thin", color: { argb: "FF000000" } },
-      bottom: { style: "thin", color: { argb: "FF000000" } },
-      right: { style: "thin", color: { argb: "FF000000" } },
-    };
-  });
-
-  for (const nota of result.notas) {
-    ws.addRow({
-      data: toJsDate(nota.data) ?? nota.data ?? "",
-      fornecedor: nota.fornecedor,
-      nota: nota.notaFiscal,
-      valor: nota.valorNF,
-      falta: nota.faltaPagar,
-      info: nota.informacoes ?? "",
-    });
-  }
-
-  // Total row
+  const header = ws.getRow(1); header.height = 22;
+  header.eachCell((cell) => { cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF374151" } }; cell.font = { bold: true, color: { argb: "FFFFFFFF" } }; cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true }; });
+  for (const nota of result.notas) ws.addRow({ data: toJsDate(nota.data) ?? nota.data ?? "", fornecedor: nota.fornecedor, nota: nota.notaFiscal, valor: nota.valorNF, falta: nota.faltaPagar, info: nota.informacoes, motivo: nota.motivosConferencia.join("\n") });
   const totalRowNum = ws.rowCount + 1;
-  const totalRow = ws.getRow(totalRowNum);
-  totalRow.getCell(3).value = "TOTAL";
-  totalRow.getCell(5).value = {
-    formula: `SUM(E2:E${totalRowNum - 1})`,
-  };
-
-  const currencyFmt = '"R$" #,##0.00;[Red]-"R$" #,##0.00';
-  const dateFmt = "dd/mm/yyyy";
-
-  // Body styling
-  for (let r = 2; r <= totalRowNum; r++) {
-    const row = ws.getRow(r);
-    const isTotal = r === totalRowNum;
-    row.height = isTotal ? 22 : 20;
-    row.eachCell({ includeEmpty: true }, (cell, colNum) => {
-      cell.border = {
-        top: { style: "thin", color: { argb: "FF000000" } },
-        left: { style: "thin", color: { argb: "FF000000" } },
-        bottom: { style: "thin", color: { argb: "FF000000" } },
-        right: { style: "thin", color: { argb: "FF000000" } },
-      };
-      cell.alignment = {
-        vertical: "middle",
-        horizontal: colNum === 2 || colNum === 6 ? "left" : "center",
-        wrapText: colNum === 2 || colNum === 6,
-      };
-      cell.fill = {
-        type: "pattern",
-        pattern: "solid",
-        fgColor: { argb: isTotal ? "FFE5E7EB" : "FFF1F5F9" },
-      };
-      if (isTotal) cell.font = { bold: true };
-      if (colNum === 1) cell.numFmt = dateFmt;
-      if (colNum === 4 || colNum === 5) cell.numFmt = currencyFmt;
+  ws.getRow(totalRowNum).getCell(3).value = "TOTAL";
+  ws.getRow(totalRowNum).getCell(5).value = { formula: `SUM(E2:E${totalRowNum - 1})` };
+  for (let rowNumber = 2; rowNumber <= totalRowNum; rowNumber++) {
+    const row = ws.getRow(rowNumber); const isTotal = rowNumber === totalRowNum; row.height = isTotal ? 22 : 32;
+    row.eachCell({ includeEmpty: true }, (cell, col) => {
+      cell.alignment = { vertical: "middle", horizontal: col === 2 || col === 6 || col === 7 ? "left" : "center", wrapText: col === 2 || col === 6 || col === 7 };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: isTotal ? "FFE5E7EB" : col === 7 && cell.value ? "FFFFF4CC" : "FFF1F5F9" } };
+      if (isTotal) cell.font = { bold: true }; if (col === 1) cell.numFmt = "dd/mm/yyyy"; if (col === 4 || col === 5) cell.numFmt = '"R$" #,##0.00;[Red]-"R$" #,##0.00';
+      cell.border = { top: { style: "thin", color: { argb: "FF000000" } }, left: { style: "thin", color: { argb: "FF000000" } }, bottom: { style: "thin", color: { argb: "FF000000" } }, right: { style: "thin", color: { argb: "FF000000" } } };
     });
   }
 }
 
 export async function buildXlsx(input: TransformResult | SheetInput[]): Promise<Blob> {
-  const wb = new ExcelJS.Workbook();
-  const sheets: SheetInput[] = Array.isArray(input)
-    ? input
-    : [{ conta: "Notas Fiscais", result: input }];
+  const workbook = new ExcelJS.Workbook();
+  const sheets = Array.isArray(input) ? input : [{ conta: "Notas Fiscais", result: input }];
   const used = new Set<string>();
-  for (const { conta, result } of sheets) {
-    let name = sanitizeSheetName(conta);
-    let i = 2;
-    while (used.has(name)) name = sanitizeSheetName(`${conta}_${i++}`);
-    used.add(name);
-    const ws = wb.addWorksheet(name, { views: [{ state: "frozen", ySplit: 1 }] });
-    populateSheet(ws, result);
+  for (const sheet of sheets) {
+    let name = sanitizeSheetName(sheet.conta); let suffix = 2;
+    while (used.has(name)) name = sanitizeSheetName(`${sheet.conta}_${suffix++}`);
+    used.add(name); populateSheet(workbook.addWorksheet(name, { views: [{ state: "frozen", ySplit: 1 }] }), sheet.result);
   }
-  const buffer = await wb.xlsx.writeBuffer();
-  return new Blob([buffer], {
-    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  });
+  const buffer = await workbook.xlsx.writeBuffer();
+  return new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
 }
