@@ -84,7 +84,7 @@ function parseLine(text: string): PagamentoRow | null {
   // Strip "0006" empresa prefix if present (leading zeros + short digits).
   numero = numero.replace(/^0+/, "");
   const digits = numero.replace(/\D+/g, "");
-  if (digits.length < 3) return null;
+  if (digits.length < 2) return null;
 
   const fornecedor = tokens.join(" ").trim();
   if (!fornecedor) return null;
