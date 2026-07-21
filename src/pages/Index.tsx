@@ -484,7 +484,7 @@ const Index = () => {
           />
         </div>
 
-        <div ref={revealCard} className="reveal" key={`step-${step}`}>
+        <div ref={revealCard} className="reveal is-visible" key={`step-${step}`}>
 
         {step === 1 && (
           <StepCard
