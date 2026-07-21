@@ -12,6 +12,23 @@ dist
 dist-ssr
 *.local
 
+# Arquivos contábeis e documentos privados
+*.xlsx
+*.xls
+*.xlsm
+*.xlsb
+*.csv
+*.pdf
+*.zip
+*.rar
+*.7z
+
+# Pastas locais para testes com dados reais
+dados-privados/
+arquivos-teste/
+private-data/
+test-data-private/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
