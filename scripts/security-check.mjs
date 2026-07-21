@@ -6,8 +6,8 @@ const forbiddenDocumentExtensions = new Set([
   ".xlsx", ".xls", ".xlsm", ".xlsb", ".csv", ".pdf", ".zip", ".rar", ".7z",
 ]);
 
-const allowedNetworkFiles = new Set([
-  // Adicione aqui somente arquivos revisados que realmente precisem de comunicação externa.
+const filesExcludedFromNetworkScan = new Set([
+  "scripts/security-check.mjs",
 ]);
 
 const networkPatterns = [
@@ -36,7 +36,7 @@ for (const file of trackedFiles) {
 }
 
 for (const file of trackedFiles.filter((name) => /\.(?:ts|tsx|js|jsx|mjs|cjs)$/i.test(name))) {
-  if (allowedNetworkFiles.has(file)) continue;
+  if (filesExcludedFromNetworkScan.has(file)) continue;
   const content = readFileSync(file, "utf8");
   for (const pattern of networkPatterns) {
     if (pattern.regex.test(content)) {
