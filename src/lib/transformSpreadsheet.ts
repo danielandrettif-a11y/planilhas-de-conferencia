@@ -209,8 +209,9 @@ function formatDateList(dates: Date[]): string {
   return `${pieces.slice(0, -1).join(", ")} e ${pieces[pieces.length - 1]}`;
 }
 function ymIndex(date: Date): number { return date.getFullYear() * 12 + date.getMonth(); }
-function isLastDay(date: Date, mes: MesConferencia): boolean {
-  return date.getFullYear() === mes.ano && date.getMonth() + 1 === mes.mes && date.getDate() === new Date(mes.ano, mes.mes, 0).getDate();
+function isCalendarMonthLastDay(date: Date): boolean {
+  const lastDay = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+  return date.getDate() === lastDay;
 }
 
 interface NormalizedPayment extends PagamentoRow { numeroNorm: string }
@@ -256,15 +257,12 @@ function selectPaymentsForInvoice(nota: NotaFiscal, rows: NormalizedPayment[]): 
   const nf = normNota(nota.notaFiscal);
   if (!nf) return { rows: [], derived: false };
 
-  // 1) Primeiro limita o universo ao fornecedor correto.
   const supplierRows = selectSupplierRows(nota, rows);
   if (supplierRows.length === 0) return { rows: [], derived: false };
 
-  // 2) Dentro desse fornecedor, a NF exata sempre tem prioridade.
   const exact = supplierRows.filter((row) => row.numeroNorm === nf);
   if (exact.length > 0) return { rows: exact, derived: false };
 
-  // 3) Sem NF exata, procura títulos derivados/parcelados da NF.
   const groups = groupDerivedBySuffixLength(nf, supplierRows);
   const validGroups = groups.filter((group) => groupMatchesExpectedValue(nota, group));
   if (validGroups.length !== 1) return { rows: [], derived: false };
@@ -302,7 +300,7 @@ export function applyPagamentosPdf(notas: NotaFiscal[], pdfRows: PagamentoRow[],
 
     for (const row of paidRows) {
       const paidAt = row.dataBaixa as Date;
-      if (isLastDay(paidAt, opts.mesConferencia)) {
+      if (isCalendarMonthLastDay(paidAt)) {
         displayDates.push(paidAt);
         lastDayFlag = true;
       } else if (ymIndex(paidAt) > mesIdx) {
@@ -342,7 +340,9 @@ export function applyPagamentosPdf(notas: NotaFiscal[], pdfRows: PagamentoRow[],
       }
     }
 
-    if (lastDayFlag) addReason(nota, "Pagamento realizado no último dia do mês; verificar a compensação bancária no período seguinte.");
+    if (lastDayFlag) {
+      addReason(nota, "Pagamento realizado no último dia do mês. Pode ter sido compensado no banco ou no sistema no primeiro dia útil do mês seguinte.");
+    }
     if (nota.motivosConferencia.length > 0) markConferir(nota);
   }
 }
