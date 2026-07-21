@@ -134,6 +134,30 @@ function markConferir(nota: NotaFiscal): void {
   }
 }
 
+function stripConferir(value: string): string {
+  return value.replace(/\s*\(conferir\)\s*$/i, "").trim();
+}
+
+function appendInfo(current: string, message: string): string {
+  const clean = stripConferir(current);
+  return clean ? `${clean} - ${message}` : message;
+}
+
+function isAutomaticPaymentInfo(value: string): boolean {
+  return /faltou\s+pagar|pagou\s+.*\s+a\s+(?:menos|mais)|pr[oó]ximas\s+parcelas|sem\s+pagamento\s+no\s+erp/i.test(value);
+}
+
+function roundCurrency(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function formatBRL(value: number): string {
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  }).format(roundCurrency(value)).replace(/\u00a0/g, " ");
+}
+
 export interface PrevEntry { fornecedor: string; tokens: Set<string>; info: string }
 
 function formatInfoValue(value: unknown): string {
@@ -208,37 +232,121 @@ export function applyPagamentosPdf(notas: NotaFiscal[], pdfRows: PagamentoRow[],
 
   for (const nota of notas) {
     const nf = normNota(nota.notaFiscal);
-    const candidates = normalized.map((row) => ({ row, match: titleMatch(nf, row.numeroNorm), score: supplierScore(nota.fornecedor, row.fornecedor) }))
+    const inheritedInfo = isAutomaticPaymentInfo(nota.informacoes) ? "" : nota.informacoes;
+    const candidates = normalized
+      .map((row) => ({
+        row,
+        match: titleMatch(nf, row.numeroNorm),
+        score: supplierScore(nota.fornecedor, row.fornecedor),
+      }))
       .filter((item) => (item.match.exact || item.match.fuzzy) && item.score > 0);
+
     const exact = candidates.filter((item) => item.match.exact);
-    const selected = exact.length > 0 ? exact : candidates.filter((item) => item.match.fuzzy);
-    if (selected.length === 0) continue;
+    let selected = exact;
+    let usedFuzzyMatch = false;
 
-    const uniqueRows = [...new Map(selected.map(({ row }) => [`${row.numeroNorm}|${normFornecedor(row.fornecedor)}|${row.valorTitulo}|${row.valorAberto}|${row.dataBaixa ? dateKey(row.dataBaixa) : ""}`, row])).values()];
-    if (uniqueRows.length < selected.length) addReason(nota, "O PDF continha lançamentos duplicados; as duplicidades foram ignoradas.");
-    if (exact.length === 0) addReason(nota, "O título foi localizado por correspondência aproximada de número; confirme o vínculo manualmente.");
+    if (exact.length === 0) {
+      const safeFuzzy = candidates.filter((item) => {
+        const suffixLength = item.row.numeroNorm.startsWith(nf)
+          ? item.row.numeroNorm.length - nf.length
+          : 0;
+        return item.match.fuzzy
+          && nf.length >= 4
+          && item.score >= 80
+          && suffixLength >= 3;
+      });
+      if (safeFuzzy.length > 0) {
+        selected = safeFuzzy;
+        usedFuzzyMatch = true;
+      }
+    }
 
-    const hasPending = uniqueRows.some((row) => row.dataBaixa == null);
+    if (selected.length === 0) {
+      if (isAutomaticPaymentInfo(nota.informacoes)) nota.informacoes = "";
+      continue;
+    }
+
+    const uniqueRows = [...new Map(selected.map(({ row }) => [
+      `${row.numeroNorm}|${normFornecedor(row.fornecedor)}|${row.valorTitulo}|${row.valorAberto}|${row.dataBaixa ? dateKey(row.dataBaixa) : ""}`,
+      row,
+    ])).values()];
+
+    if (uniqueRows.length < selected.length) {
+      addReason(nota, "O PDF continha lançamentos duplicados; as duplicidades foram ignoradas.");
+    }
+    if (usedFuzzyMatch) {
+      addReason(nota, "O título foi localizado por correspondência aproximada de número; confirme o vínculo manualmente.");
+    }
+
+    const paidRows = uniqueRows.filter((row) => row.dataBaixa !== null);
+    const pendingRows = uniqueRows.filter((row) => row.dataBaixa === null);
     const displayDates: Date[] = [];
     let lastDayFlag = false;
-    for (const row of uniqueRows) {
-      if (!row.dataBaixa) continue;
-      if (isLastDay(row.dataBaixa, opts.mesConferencia)) { displayDates.push(row.dataBaixa); lastDayFlag = true; continue; }
-      if (ymIndex(row.dataBaixa) > mesIdx) displayDates.push(row.dataBaixa);
+
+    for (const row of paidRows) {
+      const paidAt = row.dataBaixa as Date;
+      if (isLastDay(paidAt, opts.mesConferencia)) {
+        displayDates.push(paidAt);
+        lastDayFlag = true;
+        continue;
+      }
+      if (ymIndex(paidAt) > mesIdx) displayDates.push(paidAt);
     }
 
     let text = "";
-    if (hasPending && displayDates.length === 0) text = "Próximas parcelas ainda sem programação";
-    else if (hasPending) text = `${formatDateList(displayDates).replace(/\/\d{4}$/, "")} e próximas ainda sem programação`;
-    else if (displayDates.length > 0) text = formatDateList(displayDates);
+    if (paidRows.length === 0 && pendingRows.length > 0) {
+      text = inheritedInfo || "Sem pagamento no ERP";
+    } else if (pendingRows.length > 0 && displayDates.length === 0) {
+      text = "Próximas parcelas ainda sem programação";
+    } else if (pendingRows.length > 0) {
+      text = `${formatDateList(displayDates).replace(/\/\d{4}$/, "")} e próximas ainda sem programação`;
+    } else if (displayDates.length > 0) {
+      text = formatDateList(displayDates);
+    } else {
+      text = inheritedInfo;
+    }
 
-    const sumTitle = uniqueRows.reduce((sum, row) => sum + row.valorTitulo, 0);
-    const sumOpen = uniqueRows.reduce((sum, row) => sum + row.valorAberto, 0);
-    if (Math.abs(sumTitle - nota.valorNF) > 0.02) addReason(nota, `Valor dos títulos no PDF (R$ ${sumTitle.toFixed(2)}) diferente do VALOR DA NF (R$ ${nota.valorNF.toFixed(2)}).`);
-    if (hasPending && Math.abs(sumOpen - nota.faltaPagar) > 0.02) addReason(nota, `Valor aberto no PDF (R$ ${sumOpen.toFixed(2)}) diferente do FALTA PAGAR (R$ ${nota.faltaPagar.toFixed(2)}).`);
-    if (lastDayFlag) addReason(nota, "Pagamento realizado no último dia do mês; verificar a compensação bancária no período seguinte.");
+    nota.informacoes = text;
 
-    if (text) nota.informacoes = text;
+    // Compara o pagamento líquido com o FALTA PAGAR, nunca com o valor bruto da NF.
+    // Há dois cenários possíveis na planilha contábil:
+    // 1) o pagamento ainda não foi lançado: FALTA PAGAR é o valor líquido esperado;
+    // 2) o pagamento já foi abatido: FALTA PAGAR é apenas o saldo residual.
+    if (paidRows.length > 0 && pendingRows.length === 0) {
+      const valorPago = roundCurrency(paidRows.reduce((sum, row) => sum + row.valorTitulo, 0));
+      const totalLancamentosNegativos = roundCurrency(nota.valorNF - nota.faltaPagar);
+      const pagamentoJaAbatidoNaPlanilha = totalLancamentosNegativos + 0.02 >= valorPago;
+
+      const diferencaAssinada = pagamentoJaAbatidoNaPlanilha
+        ? roundCurrency(nota.faltaPagar)
+        : roundCurrency(nota.faltaPagar - valorPago);
+      const valorEsperado = pagamentoJaAbatidoNaPlanilha
+        ? roundCurrency(valorPago + diferencaAssinada)
+        : roundCurrency(nota.faltaPagar);
+
+      if (Math.abs(diferencaAssinada) >= 0.01) {
+        const diferenca = Math.abs(diferencaAssinada);
+
+        if (diferencaAssinada > 0) {
+          nota.informacoes = appendInfo(nota.informacoes, `Pagou ${formatBRL(diferenca)} a menos`);
+          addReason(
+            nota,
+            `Era para pagar ${formatBRL(valorEsperado)}. O PDF mostra pagamento de ${formatBRL(valorPago)}. Foram pagos ${formatBRL(diferenca)} a menos.`,
+          );
+        } else {
+          nota.informacoes = appendInfo(nota.informacoes, `Pagou ${formatBRL(diferenca)} a mais`);
+          addReason(
+            nota,
+            `Era para pagar ${formatBRL(valorEsperado)}. O PDF mostra pagamento de ${formatBRL(valorPago)}. Foram pagos ${formatBRL(diferenca)} a mais.`,
+          );
+        }
+      }
+    }
+
+    if (lastDayFlag) {
+      addReason(nota, "Pagamento realizado no último dia do mês; verificar a compensação bancária no período seguinte.");
+    }
+
     if (nota.motivosConferencia.length > 0) markConferir(nota);
   }
 }
