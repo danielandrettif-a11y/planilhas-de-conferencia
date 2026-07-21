@@ -144,7 +144,7 @@ function appendInfo(current: string, message: string): string {
 }
 
 function isAutomaticPaymentInfo(value: string): boolean {
-  return /faltou\s+pagar|pagou\s+.*\s+a\s+(?:menos|mais)|pr[oó]ximas\s+parcelas|sem\s+pagamento\s+no\s+erp/i.test(value);
+  return /faltou\s+pagar|pagou\s+.*\s+a\s+(?:menos|mais)|pr[oó]ximas\s+parcelas|sem\s+pagamento\s+no\s+erp|t[ií]tulo\s+cadastrado/i.test(value);
 }
 
 function roundCurrency(value: number): number {
@@ -215,6 +215,7 @@ function isCalendarMonthLastDay(date: Date): boolean {
 }
 
 interface NormalizedPayment extends PagamentoRow { numeroNorm: string }
+type MatchKind = "exact" | "derived" | "shortened";
 
 function selectSupplierRows(nota: NotaFiscal, rows: NormalizedPayment[]): NormalizedPayment[] {
   const scored = rows.map((row) => ({ row, score: supplierScore(nota.fornecedor, row.fornecedor) }))
@@ -236,6 +237,12 @@ function isSafeDerivedTitle(nf: string, title: string): boolean {
   return suffix.length >= 2 && /^0+\d*$/.test(suffix);
 }
 
+function isSafeShortenedTitle(nf: string, title: string): boolean {
+  if (title.length < 5 || nf.length <= title.length || !nf.endsWith(title)) return false;
+  const removedPrefix = nf.slice(0, nf.length - title.length);
+  return /^\d+$/.test(removedPrefix) && removedPrefix.length >= 2;
+}
+
 function groupDerivedBySuffixLength(nf: string, rows: NormalizedPayment[]): NormalizedPayment[][] {
   const groups = new Map<number, NormalizedPayment[]>();
   for (const row of rows) {
@@ -253,21 +260,27 @@ function groupMatchesExpectedValue(nota: NotaFiscal, rows: NormalizedPayment[]):
   return Math.abs(total - expectedOpen) <= 0.02 || Math.abs(alreadyDeducted - nota.valorNF) <= 0.02;
 }
 
-function selectPaymentsForInvoice(nota: NotaFiscal, rows: NormalizedPayment[]): { rows: NormalizedPayment[]; derived: boolean } {
+function selectPaymentsForInvoice(nota: NotaFiscal, rows: NormalizedPayment[]): { rows: NormalizedPayment[]; kind: MatchKind | null } {
   const nf = normNota(nota.notaFiscal);
-  if (!nf) return { rows: [], derived: false };
+  if (!nf) return { rows: [], kind: null };
 
   const supplierRows = selectSupplierRows(nota, rows);
-  if (supplierRows.length === 0) return { rows: [], derived: false };
+  if (supplierRows.length === 0) return { rows: [], kind: null };
 
   const exact = supplierRows.filter((row) => row.numeroNorm === nf);
-  if (exact.length > 0) return { rows: exact, derived: false };
+  if (exact.length > 0) return { rows: exact, kind: "exact" };
 
   const groups = groupDerivedBySuffixLength(nf, supplierRows);
   const validGroups = groups.filter((group) => groupMatchesExpectedValue(nota, group));
-  if (validGroups.length !== 1) return { rows: [], derived: false };
+  if (validGroups.length === 1) return { rows: validGroups[0], kind: "derived" };
 
-  return { rows: validGroups[0], derived: true };
+  const shortened = supplierRows.filter((row) => isSafeShortenedTitle(nf, row.numeroNorm));
+  const shortenedByTitle = new Map<string, NormalizedPayment[]>();
+  for (const row of shortened) shortenedByTitle.set(row.numeroNorm, [...(shortenedByTitle.get(row.numeroNorm) ?? []), row]);
+  const validShortened = [...shortenedByTitle.values()].filter((group) => groupMatchesExpectedValue(nota, group));
+  if (validShortened.length === 1) return { rows: validShortened[0], kind: "shortened" };
+
+  return { rows: [], kind: null };
 }
 
 export function applyPagamentosPdf(notas: NotaFiscal[], pdfRows: PagamentoRow[], opts: { mesConferencia: MesConferencia }): void {
@@ -289,8 +302,11 @@ export function applyPagamentosPdf(notas: NotaFiscal[], pdfRows: PagamentoRow[],
     ])).values()];
 
     if (uniqueRows.length < selection.rows.length) addReason(nota, "O PDF continha lançamentos duplicados; as duplicidades foram ignoradas.");
-    if (selection.derived) {
+    if (selection.kind === "derived") {
       addReason(nota, `Pagamento vinculado por títulos derivados da NF ${nota.notaFiscal}: ${uniqueRows.map((row) => row.numeroNorm).join(", ")}.`);
+    }
+    if (selection.kind === "shortened") {
+      addReason(nota, `Título do ERP identificado pelo final da NF ${nota.notaFiscal}: ${uniqueRows.map((row) => row.numeroNorm).join(", ")}.`);
     }
 
     const paidRows = uniqueRows.filter((row) => row.dataBaixa !== null);
@@ -309,11 +325,20 @@ export function applyPagamentosPdf(notas: NotaFiscal[], pdfRows: PagamentoRow[],
     }
 
     let text = "";
-    if (paidRows.length === 0 && pendingRows.length > 0) text = inheritedInfo || "Sem pagamento no ERP";
-    else if (pendingRows.length > 0 && displayDates.length === 0) text = "Próximas parcelas ainda sem programação";
-    else if (pendingRows.length > 0) text = `${formatDateList(displayDates).replace(/\/\d{4}$/, "")} e próximas ainda sem programação`;
-    else if (displayDates.length > 0) text = formatDateList(displayDates);
-    else text = inheritedInfo;
+    if (paidRows.length === 0 && pendingRows.length > 0) {
+      text = "Título cadastrado, mas ainda sem data programada para pagamento";
+      addReason(nota, "O título foi localizado no ERP para este fornecedor e esta NF, mas ainda não possui data de baixa ou pagamento programado.");
+    } else if (pendingRows.length > 0 && displayDates.length === 0) {
+      text = "Próximas parcelas ainda sem programação";
+      addReason(nota, "Existem parcelas cadastradas no ERP, mas ainda sem data programada para pagamento.");
+    } else if (pendingRows.length > 0) {
+      text = `${formatDateList(displayDates).replace(/\/\d{4}$/, "")} e próximas ainda sem programação`;
+      addReason(nota, "Existem parcelas já pagas e outras ainda sem data programada para pagamento.");
+    } else if (displayDates.length > 0) {
+      text = formatDateList(displayDates);
+    } else {
+      text = inheritedInfo;
+    }
 
     nota.informacoes = text;
 
