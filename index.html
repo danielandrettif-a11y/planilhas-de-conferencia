@@ -1,33 +1,31 @@
 <!doctype html>
-<html lang="en">
+<html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="icon" type="image/png" href="/favicon.png">
-    <title>Conversor de Planilhas Conferencia</title>
-    <meta name="description" content="Converta planilhas exportadas do Alterdata em um novo formato padronizado. Processamento local, sem armazenamento.">
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'none'; frame-src 'none'; media-src 'none'; manifest-src 'self'"
+    />
+    <meta name="referrer" content="no-referrer" />
+    <meta http-equiv="Permissions-Policy" content="camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), bluetooth=()" />
+    <link rel="icon" type="image/png" href="./favicon.png" />
+    <title>Conversor de Planilhas Conferência</title>
+    <meta
+      name="description"
+      content="Converta planilhas exportadas do Alterdata em um novo formato padronizado. Processamento local, sem envio ou armazenamento dos arquivos."
+    />
     <meta name="author" content="Conversor Alterdata" />
-
     <meta property="og:type" content="website" />
-
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta property="og:title" content="Conversor de Planilhas Conferencia">
-  <meta name="twitter:title" content="Conversor de Planilhas Conferencia">
-  <meta property="og:description" content="Converta planilhas exportadas do Alterdata em um novo formato padronizado. Processamento local, sem armazenamento.">
-  <meta name="twitter:description" content="Converta planilhas exportadas do Alterdata em um novo formato padronizado. Processamento local, sem armazenamento.">
-</head>
+    <meta property="og:title" content="Conversor de Planilhas Conferência" />
+    <meta property="og:description" content="Processamento local, sem envio ou armazenamento dos arquivos." />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Conversor de Planilhas Conferência" />
+    <meta name="twitter:description" content="Processamento local, sem envio ou armazenamento dos arquivos." />
+  </head>
 
   <body>
     <div id="root"></div>
-    <script>
-      (function(){
-        try {
-          var t = localStorage.getItem('theme');
-          if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-          if (t === 'dark') document.documentElement.classList.add('dark');
-        } catch(e) {}
-      })();
-    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
