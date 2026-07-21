@@ -152,10 +152,8 @@ function roundCurrency(value: number): number {
 }
 
 function formatBRL(value: number): string {
-  return new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  }).format(roundCurrency(value)).replace(/\u00a0/g, " ");
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" })
+    .format(roundCurrency(value)).replace(/\u00a0/g, " ");
 }
 
 export interface PrevEntry { fornecedor: string; tokens: Set<string>; info: string }
@@ -215,67 +213,86 @@ function isLastDay(date: Date, mes: MesConferencia): boolean {
   return date.getFullYear() === mes.ano && date.getMonth() + 1 === mes.mes && date.getDate() === new Date(mes.ano, mes.mes, 0).getDate();
 }
 
-function titleMatch(nf: string, title: string): { exact: boolean; fuzzy: boolean } {
-  if (!nf || !title) return { exact: false, fuzzy: false };
-  if (nf === title) return { exact: true, fuzzy: false };
-  if (nf.length < 3) return { exact: false, fuzzy: false };
-  if (title.startsWith(nf) && /^\d+$/.test(title.slice(nf.length))) return { exact: false, fuzzy: true };
-  if (nf.length > title.length && nf.endsWith(title) && /^\d+$/.test(nf.slice(0, nf.length - title.length))) return { exact: false, fuzzy: true };
-  if (title.length > nf.length && title.endsWith(nf) && /^\d+$/.test(title.slice(0, title.length - nf.length))) return { exact: false, fuzzy: true };
-  return { exact: false, fuzzy: false };
+interface NormalizedPayment extends PagamentoRow { numeroNorm: string }
+
+function selectSupplierRows(nota: NotaFiscal, rows: NormalizedPayment[]): NormalizedPayment[] {
+  const scored = rows.map((row) => ({ row, score: supplierScore(nota.fornecedor, row.fornecedor) }))
+    .filter((item) => item.score > 0);
+  if (scored.length === 0) return [];
+
+  const strong = scored.filter((item) => item.score >= 80);
+  if (strong.length > 0) return strong.map((item) => item.row);
+
+  const bestScore = Math.max(...scored.map((item) => item.score));
+  const best = scored.filter((item) => item.score === bestScore);
+  const supplierNames = new Set(best.map((item) => normFornecedor(item.row.fornecedor)));
+  return supplierNames.size === 1 ? best.map((item) => item.row) : [];
+}
+
+function isSafeDerivedTitle(nf: string, title: string): boolean {
+  if (nf.length < 4 || !title.startsWith(nf)) return false;
+  const suffix = title.slice(nf.length);
+  return suffix.length >= 2 && /^0+\d*$/.test(suffix);
+}
+
+function groupDerivedBySuffixLength(nf: string, rows: NormalizedPayment[]): NormalizedPayment[][] {
+  const groups = new Map<number, NormalizedPayment[]>();
+  for (const row of rows) {
+    if (!isSafeDerivedTitle(nf, row.numeroNorm)) continue;
+    const length = row.numeroNorm.length - nf.length;
+    groups.set(length, [...(groups.get(length) ?? []), row]);
+  }
+  return [...groups.values()];
+}
+
+function groupMatchesExpectedValue(nota: NotaFiscal, rows: NormalizedPayment[]): boolean {
+  const total = roundCurrency(rows.reduce((sum, row) => sum + row.valorTitulo, 0));
+  const expectedOpen = roundCurrency(nota.faltaPagar);
+  const alreadyDeducted = roundCurrency(total + nota.faltaPagar);
+  return Math.abs(total - expectedOpen) <= 0.02 || Math.abs(alreadyDeducted - nota.valorNF) <= 0.02;
+}
+
+function selectPaymentsForInvoice(nota: NotaFiscal, rows: NormalizedPayment[]): { rows: NormalizedPayment[]; derived: boolean } {
+  const nf = normNota(nota.notaFiscal);
+  if (!nf) return { rows: [], derived: false };
+
+  // 1) Primeiro limita o universo ao fornecedor correto.
+  const supplierRows = selectSupplierRows(nota, rows);
+  if (supplierRows.length === 0) return { rows: [], derived: false };
+
+  // 2) Dentro desse fornecedor, a NF exata sempre tem prioridade.
+  const exact = supplierRows.filter((row) => row.numeroNorm === nf);
+  if (exact.length > 0) return { rows: exact, derived: false };
+
+  // 3) Sem NF exata, procura títulos derivados/parcelados da NF.
+  const groups = groupDerivedBySuffixLength(nf, supplierRows);
+  const validGroups = groups.filter((group) => groupMatchesExpectedValue(nota, group));
+  if (validGroups.length !== 1) return { rows: [], derived: false };
+
+  return { rows: validGroups[0], derived: true };
 }
 
 export function applyPagamentosPdf(notas: NotaFiscal[], pdfRows: PagamentoRow[], opts: { mesConferencia: MesConferencia }): void {
   if (pdfRows.length === 0) return;
   const mesIdx = opts.mesConferencia.ano * 12 + opts.mesConferencia.mes - 1;
-  const normalized = pdfRows.map((row) => ({ ...row, numeroNorm: normNota(row.numero) }));
+  const normalized: NormalizedPayment[] = pdfRows.map((row) => ({ ...row, numeroNorm: normNota(row.numero) }));
 
   for (const nota of notas) {
-    const nf = normNota(nota.notaFiscal);
     const inheritedInfo = isAutomaticPaymentInfo(nota.informacoes) ? "" : nota.informacoes;
-    const candidates = normalized
-      .map((row) => ({
-        row,
-        match: titleMatch(nf, row.numeroNorm),
-        score: supplierScore(nota.fornecedor, row.fornecedor),
-      }))
-      .filter((item) => (item.match.exact || item.match.fuzzy) && item.score > 0);
-
-    const exact = candidates.filter((item) => item.match.exact);
-    let selected = exact;
-    let usedFuzzyMatch = false;
-
-    if (exact.length === 0) {
-      const safeFuzzy = candidates.filter((item) => {
-        const suffixLength = item.row.numeroNorm.startsWith(nf)
-          ? item.row.numeroNorm.length - nf.length
-          : 0;
-        return item.match.fuzzy
-          && nf.length >= 4
-          && item.score >= 80
-          && suffixLength >= 3;
-      });
-      if (safeFuzzy.length > 0) {
-        selected = safeFuzzy;
-        usedFuzzyMatch = true;
-      }
-    }
-
-    if (selected.length === 0) {
+    const selection = selectPaymentsForInvoice(nota, normalized);
+    if (selection.rows.length === 0) {
       if (isAutomaticPaymentInfo(nota.informacoes)) nota.informacoes = "";
       continue;
     }
 
-    const uniqueRows = [...new Map(selected.map(({ row }) => [
+    const uniqueRows = [...new Map(selection.rows.map((row) => [
       `${row.numeroNorm}|${normFornecedor(row.fornecedor)}|${row.valorTitulo}|${row.valorAberto}|${row.dataBaixa ? dateKey(row.dataBaixa) : ""}`,
       row,
     ])).values()];
 
-    if (uniqueRows.length < selected.length) {
-      addReason(nota, "O PDF continha lançamentos duplicados; as duplicidades foram ignoradas.");
-    }
-    if (usedFuzzyMatch) {
-      addReason(nota, "O título foi localizado por correspondência aproximada de número; confirme o vínculo manualmente.");
+    if (uniqueRows.length < selection.rows.length) addReason(nota, "O PDF continha lançamentos duplicados; as duplicidades foram ignoradas.");
+    if (selection.derived) {
+      addReason(nota, `Pagamento vinculado por títulos derivados da NF ${nota.notaFiscal}: ${uniqueRows.map((row) => row.numeroNorm).join(", ")}.`);
     }
 
     const paidRows = uniqueRows.filter((row) => row.dataBaixa !== null);
@@ -288,35 +305,24 @@ export function applyPagamentosPdf(notas: NotaFiscal[], pdfRows: PagamentoRow[],
       if (isLastDay(paidAt, opts.mesConferencia)) {
         displayDates.push(paidAt);
         lastDayFlag = true;
-        continue;
+      } else if (ymIndex(paidAt) > mesIdx) {
+        displayDates.push(paidAt);
       }
-      if (ymIndex(paidAt) > mesIdx) displayDates.push(paidAt);
     }
 
     let text = "";
-    if (paidRows.length === 0 && pendingRows.length > 0) {
-      text = inheritedInfo || "Sem pagamento no ERP";
-    } else if (pendingRows.length > 0 && displayDates.length === 0) {
-      text = "Próximas parcelas ainda sem programação";
-    } else if (pendingRows.length > 0) {
-      text = `${formatDateList(displayDates).replace(/\/\d{4}$/, "")} e próximas ainda sem programação`;
-    } else if (displayDates.length > 0) {
-      text = formatDateList(displayDates);
-    } else {
-      text = inheritedInfo;
-    }
+    if (paidRows.length === 0 && pendingRows.length > 0) text = inheritedInfo || "Sem pagamento no ERP";
+    else if (pendingRows.length > 0 && displayDates.length === 0) text = "Próximas parcelas ainda sem programação";
+    else if (pendingRows.length > 0) text = `${formatDateList(displayDates).replace(/\/\d{4}$/, "")} e próximas ainda sem programação`;
+    else if (displayDates.length > 0) text = formatDateList(displayDates);
+    else text = inheritedInfo;
 
     nota.informacoes = text;
 
-    // Compara o pagamento líquido com o FALTA PAGAR, nunca com o valor bruto da NF.
-    // Há dois cenários possíveis na planilha contábil:
-    // 1) o pagamento ainda não foi lançado: FALTA PAGAR é o valor líquido esperado;
-    // 2) o pagamento já foi abatido: FALTA PAGAR é apenas o saldo residual.
     if (paidRows.length > 0 && pendingRows.length === 0) {
       const valorPago = roundCurrency(paidRows.reduce((sum, row) => sum + row.valorTitulo, 0));
       const totalLancamentosNegativos = roundCurrency(nota.valorNF - nota.faltaPagar);
       const pagamentoJaAbatidoNaPlanilha = totalLancamentosNegativos + 0.02 >= valorPago;
-
       const diferencaAssinada = pagamentoJaAbatidoNaPlanilha
         ? roundCurrency(nota.faltaPagar)
         : roundCurrency(nota.faltaPagar - valorPago);
@@ -326,27 +332,17 @@ export function applyPagamentosPdf(notas: NotaFiscal[], pdfRows: PagamentoRow[],
 
       if (Math.abs(diferencaAssinada) >= 0.01) {
         const diferenca = Math.abs(diferencaAssinada);
-
         if (diferencaAssinada > 0) {
           nota.informacoes = appendInfo(nota.informacoes, `Pagou ${formatBRL(diferenca)} a menos`);
-          addReason(
-            nota,
-            `Era para pagar ${formatBRL(valorEsperado)}. O PDF mostra pagamento de ${formatBRL(valorPago)}. Foram pagos ${formatBRL(diferenca)} a menos.`,
-          );
+          addReason(nota, `Era para pagar ${formatBRL(valorEsperado)}. O PDF mostra pagamento de ${formatBRL(valorPago)}. Foram pagos ${formatBRL(diferenca)} a menos.`);
         } else {
           nota.informacoes = appendInfo(nota.informacoes, `Pagou ${formatBRL(diferenca)} a mais`);
-          addReason(
-            nota,
-            `Era para pagar ${formatBRL(valorEsperado)}. O PDF mostra pagamento de ${formatBRL(valorPago)}. Foram pagos ${formatBRL(diferenca)} a mais.`,
-          );
+          addReason(nota, `Era para pagar ${formatBRL(valorEsperado)}. O PDF mostra pagamento de ${formatBRL(valorPago)}. Foram pagos ${formatBRL(diferenca)} a mais.`);
         }
       }
     }
 
-    if (lastDayFlag) {
-      addReason(nota, "Pagamento realizado no último dia do mês; verificar a compensação bancária no período seguinte.");
-    }
-
+    if (lastDayFlag) addReason(nota, "Pagamento realizado no último dia do mês; verificar a compensação bancária no período seguinte.");
     if (nota.motivosConferencia.length > 0) markConferir(nota);
   }
 }
@@ -422,7 +418,8 @@ function toJsDate(value: unknown): Date | null {
   if (typeof value === "string" && value.trim()) {
     const br = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
     if (br) return new Date(br[3].length === 2 ? 2000 + Number(br[3]) : Number(br[3]), Number(br[2]) - 1, Number(br[1]));
-    const parsed = new Date(value); if (!Number.isNaN(parsed.getTime())) return parsed;
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
   }
   return null;
 }
@@ -437,7 +434,11 @@ function populateSheet(ws: ExcelJS.Worksheet, result: TransformResult): void {
     { header: "MOTIVO DA CONFERÊNCIA", key: "motivo", width: 65 },
   ];
   const header = ws.getRow(1); header.height = 22;
-  header.eachCell((cell) => { cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF374151" } }; cell.font = { bold: true, color: { argb: "FFFFFFFF" } }; cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true }; });
+  header.eachCell((cell) => {
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF374151" } };
+    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+  });
   for (const nota of result.notas) ws.addRow({ data: toJsDate(nota.data) ?? nota.data ?? "", fornecedor: nota.fornecedor, nota: nota.notaFiscal, valor: nota.valorNF, falta: nota.faltaPagar, info: nota.informacoes, motivo: nota.motivosConferencia.join("\n") });
   const totalRowNum = ws.rowCount + 1;
   ws.getRow(totalRowNum).getCell(3).value = "TOTAL";
@@ -447,7 +448,9 @@ function populateSheet(ws: ExcelJS.Worksheet, result: TransformResult): void {
     row.eachCell({ includeEmpty: true }, (cell, col) => {
       cell.alignment = { vertical: "middle", horizontal: col === 2 || col === 6 || col === 7 ? "left" : "center", wrapText: col === 2 || col === 6 || col === 7 };
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: isTotal ? "FFE5E7EB" : col === 7 && cell.value ? "FFFFF4CC" : "FFF1F5F9" } };
-      if (isTotal) cell.font = { bold: true }; if (col === 1) cell.numFmt = "dd/mm/yyyy"; if (col === 4 || col === 5) cell.numFmt = '"R$" #,##0.00;[Red]-"R$" #,##0.00';
+      if (isTotal) cell.font = { bold: true };
+      if (col === 1) cell.numFmt = "dd/mm/yyyy";
+      if (col === 4 || col === 5) cell.numFmt = '"R$" #,##0.00;[Red]-"R$" #,##0.00';
       cell.border = { top: { style: "thin", color: { argb: "FF000000" } }, left: { style: "thin", color: { argb: "FF000000" } }, bottom: { style: "thin", color: { argb: "FF000000" } }, right: { style: "thin", color: { argb: "FF000000" } } };
     });
   }
@@ -460,7 +463,8 @@ export async function buildXlsx(input: TransformResult | SheetInput[]): Promise<
   for (const sheet of sheets) {
     let name = sanitizeSheetName(sheet.conta); let suffix = 2;
     while (used.has(name)) name = sanitizeSheetName(`${sheet.conta}_${suffix++}`);
-    used.add(name); populateSheet(workbook.addWorksheet(name, { views: [{ state: "frozen", ySplit: 1 }] }), sheet.result);
+    used.add(name);
+    populateSheet(workbook.addWorksheet(name, { views: [{ state: "frozen", ySplit: 1 }] }), sheet.result);
   }
   const buffer = await workbook.xlsx.writeBuffer();
   return new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
