@@ -16,6 +16,10 @@ export interface NotaFiscal {
 export interface TransformResult { notas: NotaFiscal[] }
 export interface SheetInput { conta: string; result: TransformResult }
 export interface MesConferencia { ano: number; mes: number }
+export interface BuildXlsxOptions {
+  mesConferencia?: MesConferencia;
+  generatedAt?: Date;
+}
 
 const HIST_KEYS = ["Descrição histórico", "Descricao historico", "DescriÃ§Ã£o histÃ³rico"];
 const VALOR_KEYS = ["Valor"];
@@ -23,6 +27,12 @@ const DATA_KEYS = ["Data"];
 const PREV_FORNECEDOR_KEYS = ["FORNECEDOR", "Fornecedor"];
 const PREV_NOTA_KEYS = ["NOTA FISCAL", "Nota Fiscal", "NotaFiscal", "NF", "N.F.", "N F", "Nº NF", "NUMERO NF", "NÚMERO NF", "Nota"];
 const PREV_INFO_KEYS = ["INFORMAÇÕES", "INFORMACOES", "Informações", "Informacoes"];
+const MONTH_NAMES = [
+  "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+  "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+];
+
+let lastWorkbookContext: (BuildXlsxOptions & { recordedAt: number }) | null = null;
 
 function findKey(row: SheetRow, candidates: string[]): string | null {
   const keys = Object.keys(row);
@@ -159,6 +169,11 @@ function formatDate(date: Date): string {
   return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
 }
 
+function formatMonthLabel(value: MesConferencia | undefined): string {
+  if (!value || value.mes < 1 || value.mes > 12) return "não informado";
+  return `${MONTH_NAMES[value.mes - 1]}/${value.ano}`;
+}
+
 export interface PrevEntry { fornecedor: string; tokens: Set<string>; info: string }
 
 function formatInfoValue(value: unknown): string {
@@ -283,9 +298,15 @@ export function applyPagamentosPdf(
   pdfRows: PagamentoRow[],
   opts: { mesConferencia: MesConferencia; generatedAt?: Date },
 ): void {
+  const generatedAt = opts.generatedAt ?? new Date();
+  lastWorkbookContext = {
+    mesConferencia: opts.mesConferencia,
+    generatedAt,
+    recordedAt: Date.now(),
+  };
+
   if (pdfRows.length === 0) return;
   const mesIdx = opts.mesConferencia.ano * 12 + opts.mesConferencia.mes - 1;
-  const generatedAt = opts.generatedAt ?? new Date();
   const generatedDate = formatDate(generatedAt);
   const normalized: NormalizedPayment[] = pdfRows.map((row) => ({ ...row, numeroNorm: normNota(row.numero) }));
 
@@ -433,48 +454,251 @@ function toJsDate(value: unknown): Date | null {
   return null;
 }
 
-function sanitizeSheetName(name: string): string { return name.replace(/[\[\]:*?/\\]/g, "_").slice(0, 31) || "Sheet"; }
+function sanitizeSheetName(name: string): string {
+  return name.replace(/[\[\]:*?/\\]/g, "_").slice(0, 31) || "Sheet";
+}
 
-function populateSheet(ws: ExcelJS.Worksheet, result: TransformResult): void {
+function escapeSheetNameForLink(name: string): string {
+  return name.replace(/'/g, "''");
+}
+
+function accountSort(a: SheetInput, b: SheetInput): number {
+  const aTrimmed = String(a.conta).trim();
+  const bTrimmed = String(b.conta).trim();
+  const aNumeric = /^\d+$/.test(aTrimmed);
+  const bNumeric = /^\d+$/.test(bTrimmed);
+  if (aNumeric && bNumeric) return Number(aTrimmed) - Number(bTrimmed);
+  if (aNumeric) return -1;
+  if (bNumeric) return 1;
+  return aTrimmed.localeCompare(bTrimmed, "pt-BR", { numeric: true });
+}
+
+function accountBalance(result: TransformResult): number {
+  return roundCurrency(result.notas.reduce((sum, nota) => sum + nota.faltaPagar, 0));
+}
+
+function thinBorder(): Partial<ExcelJS.Borders> {
+  return {
+    top: { style: "thin", color: { argb: "FFD1D5DB" } },
+    left: { style: "thin", color: { argb: "FFD1D5DB" } },
+    bottom: { style: "thin", color: { argb: "FFD1D5DB" } },
+    right: { style: "thin", color: { argb: "FFD1D5DB" } },
+  };
+}
+
+function populateSheet(ws: ExcelJS.Worksheet, result: TransformResult, accountName: string): number {
   ws.columns = [
-    { header: "DATA", key: "data", width: 14 }, { header: "FORNECEDOR", key: "fornecedor", width: 45 },
-    { header: "NOTA FISCAL", key: "nota", width: 15 }, { header: "VALOR DA NF", key: "valor", width: 18 },
-    { header: "FALTA PAGAR", key: "falta", width: 18 }, { header: "INFORMAÇÕES", key: "info", width: 60 },
-    { header: "MOTIVO DA CONFERÊNCIA", key: "motivo", width: 65 },
+    { key: "data", width: 14 }, { key: "fornecedor", width: 45 },
+    { key: "nota", width: 15 }, { key: "valor", width: 18 },
+    { key: "falta", width: 18 }, { key: "info", width: 60 },
+    { key: "motivo", width: 65 },
   ];
-  const header = ws.getRow(1); header.height = 22;
+
+  ws.mergeCells("A1:G1");
+  const backCell = ws.getCell("A1");
+  backCell.value = { text: `← Voltar para Geral  |  Conta ${accountName}`, hyperlink: "#'Geral'!A1" };
+  backCell.font = { bold: true, color: { argb: "FF1D4ED8" }, underline: true };
+  backCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEFF6FF" } };
+  backCell.alignment = { vertical: "middle", horizontal: "left" };
+  ws.getRow(1).height = 24;
+
+  const header = ws.getRow(2);
+  header.values = ["DATA", "FORNECEDOR", "NOTA FISCAL", "VALOR DA NF", "FALTA PAGAR", "INFORMAÇÕES", "MOTIVO DA CONFERÊNCIA"];
+  header.height = 24;
   header.eachCell((cell) => {
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF374151" } };
     cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
     cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+    cell.border = thinBorder();
   });
-  for (const nota of result.notas) ws.addRow({ data: toJsDate(nota.data) ?? nota.data ?? "", fornecedor: nota.fornecedor, nota: nota.notaFiscal, valor: nota.valorNF, falta: nota.faltaPagar, info: nota.informacoes, motivo: nota.motivosConferencia.join("\n") });
+
+  for (const nota of result.notas) {
+    ws.addRow({
+      data: toJsDate(nota.data) ?? nota.data ?? "",
+      fornecedor: nota.fornecedor,
+      nota: nota.notaFiscal,
+      valor: nota.valorNF,
+      falta: nota.faltaPagar,
+      info: nota.informacoes,
+      motivo: nota.motivosConferencia.join("\n"),
+    });
+  }
+
+  const total = accountBalance(result);
   const totalRowNum = ws.rowCount + 1;
-  ws.getRow(totalRowNum).getCell(3).value = "TOTAL";
-  ws.getRow(totalRowNum).getCell(5).value = { formula: `SUM(E2:E${totalRowNum - 1})` };
-  for (let rowNumber = 2; rowNumber <= totalRowNum; rowNumber++) {
-    const row = ws.getRow(rowNumber); const isTotal = rowNumber === totalRowNum; row.height = isTotal ? 22 : 32;
+  const totalRow = ws.getRow(totalRowNum);
+  totalRow.getCell(3).value = "TOTAL";
+  totalRow.getCell(5).value = { formula: `SUM(E3:E${totalRowNum - 1})`, result: total };
+
+  for (let rowNumber = 3; rowNumber <= totalRowNum; rowNumber++) {
+    const row = ws.getRow(rowNumber);
+    const isTotal = rowNumber === totalRowNum;
+    row.height = isTotal ? 24 : 32;
     row.eachCell({ includeEmpty: true }, (cell, col) => {
-      cell.alignment = { vertical: "middle", horizontal: col === 2 || col === 6 || col === 7 ? "left" : "center", wrapText: col === 2 || col === 6 || col === 7 };
-      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: isTotal ? "FFE5E7EB" : col === 7 && cell.value ? "FFFFF4CC" : "FFF1F5F9" } };
+      cell.alignment = {
+        vertical: "middle",
+        horizontal: col === 2 || col === 6 || col === 7 ? "left" : "center",
+        wrapText: col === 2 || col === 6 || col === 7,
+      };
+      cell.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: isTotal ? "FFE5E7EB" : col === 7 && cell.value ? "FFFFF4CC" : "FFF8FAFC" },
+      };
       if (isTotal) cell.font = { bold: true };
       if (col === 1) cell.numFmt = "dd/mm/yyyy";
       if (col === 4 || col === 5) cell.numFmt = '"R$" #,##0.00;[Red]-"R$" #,##0.00';
-      cell.border = { top: { style: "thin", color: { argb: "FF000000" } }, left: { style: "thin", color: { argb: "FF000000" } }, bottom: { style: "thin", color: { argb: "FF000000" } }, right: { style: "thin", color: { argb: "FF000000" } } };
+      cell.border = thinBorder();
     });
   }
+
+  if (totalRowNum > 3) ws.autoFilter = { from: "A2", to: `G${totalRowNum - 1}` };
+  ws.views = [{ state: "frozen", ySplit: 2 }];
+  ws.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
+  return total;
 }
 
-export async function buildXlsx(input: TransformResult | SheetInput[]): Promise<Blob> {
+interface GeneralEntry {
+  conta: string;
+  sheetName: string;
+  saldo: number;
+}
+
+function populateGeneralSheet(
+  ws: ExcelJS.Worksheet,
+  entries: GeneralEntry[],
+  opts: BuildXlsxOptions,
+): void {
+  ws.columns = [
+    { key: "conta", width: 24 },
+    { key: "saldo", width: 24 },
+  ];
+  ws.properties.defaultRowHeight = 22;
+  ws.views = [{ state: "frozen", ySplit: 5 }];
+  ws.pageSetup = { orientation: "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
+
+  ws.mergeCells("A1:B1");
+  const title = ws.getCell("A1");
+  title.value = "Resumo Geral das Contas";
+  title.font = { bold: true, size: 18, color: { argb: "FFFFFFFF" } };
+  title.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F2937" } };
+  title.alignment = { vertical: "middle", horizontal: "center" };
+  ws.getRow(1).height = 34;
+
+  ws.mergeCells("A2:B2");
+  const monthCell = ws.getCell("A2");
+  monthCell.value = `Mês de conferência: ${formatMonthLabel(opts.mesConferencia)}`;
+  monthCell.font = { bold: true, color: { argb: "FF374151" } };
+  monthCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEFF6FF" } };
+  monthCell.alignment = { horizontal: "center", vertical: "middle" };
+
+  ws.mergeCells("A3:B3");
+  const dateCell = ws.getCell("A3");
+  dateCell.value = `Planilha gerada em: ${formatDate(opts.generatedAt ?? new Date())}`;
+  dateCell.font = { italic: true, color: { argb: "FF6B7280" } };
+  dateCell.alignment = { horizontal: "center", vertical: "middle" };
+
+  const headerRow = ws.getRow(5);
+  headerRow.values = ["CONTA", "SALDO FINAL"];
+  headerRow.height = 26;
+  headerRow.eachCell((cell) => {
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF374151" } };
+    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    cell.alignment = { vertical: "middle", horizontal: "center" };
+    cell.border = thinBorder();
+  });
+
+  entries.forEach((entry, index) => {
+    const rowNumber = 6 + index;
+    const row = ws.getRow(rowNumber);
+    const accountCell = row.getCell(1);
+    accountCell.value = {
+      text: entry.conta,
+      hyperlink: `#'${escapeSheetNameForLink(entry.sheetName)}'!A1`,
+    };
+    accountCell.font = { bold: true, color: { argb: "FF1D4ED8" }, underline: true };
+    accountCell.alignment = { vertical: "middle", horizontal: "center" };
+
+    const balanceCell = row.getCell(2);
+    balanceCell.value = entry.saldo;
+    balanceCell.numFmt = '"R$" #,##0.00;[Red]-"R$" #,##0.00';
+    balanceCell.font = { bold: true, color: { argb: entry.saldo < 0 ? "FFB91C1C" : "FF111827" } };
+    balanceCell.alignment = { vertical: "middle", horizontal: "right" };
+
+    const fillColor = index % 2 === 0 ? "FFF8FAFC" : "FFFFFFFF";
+    row.eachCell({ includeEmpty: true }, (cell) => {
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fillColor } };
+      cell.border = thinBorder();
+    });
+    row.height = 25;
+  });
+
+  const firstDataRow = 6;
+  const lastDataRow = entries.length > 0 ? firstDataRow + entries.length - 1 : firstDataRow;
+  const totalRowNumber = entries.length > 0 ? lastDataRow + 1 : firstDataRow;
+  const totalRow = ws.getRow(totalRowNumber);
+  totalRow.getCell(1).value = "TOTAL GERAL";
+  const totalResult = roundCurrency(entries.reduce((sum, entry) => sum + entry.saldo, 0));
+  totalRow.getCell(2).value = entries.length > 0
+    ? { formula: `SUM(B${firstDataRow}:B${lastDataRow})`, result: totalResult }
+    : 0;
+  totalRow.getCell(2).numFmt = '"R$" #,##0.00;[Red]-"R$" #,##0.00';
+  totalRow.height = 27;
+  totalRow.eachCell({ includeEmpty: true }, (cell) => {
+    cell.font = { bold: true, color: { argb: "FF111827" } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFDDEAFE" } };
+    cell.alignment = { vertical: "middle", horizontal: cell.col === 2 ? "right" : "center" };
+    cell.border = thinBorder();
+  });
+
+  if (entries.length > 0) ws.autoFilter = { from: "A5", to: `B${lastDataRow}` };
+}
+
+export async function buildXlsx(
+  input: TransformResult | SheetInput[],
+  options: BuildXlsxOptions = {},
+): Promise<Blob> {
   const workbook = new ExcelJS.Workbook();
-  const sheets = Array.isArray(input) ? input : [{ conta: "Notas Fiscais", result: input }];
-  const used = new Set<string>();
-  for (const sheet of sheets) {
-    let name = sanitizeSheetName(sheet.conta); let suffix = 2;
-    while (used.has(name)) name = sanitizeSheetName(`${sheet.conta}_${suffix++}`);
-    used.add(name);
-    populateSheet(workbook.addWorksheet(name, { views: [{ state: "frozen", ySplit: 1 }] }), sheet.result);
+  workbook.creator = "Conversor de Planilhas";
+  workbook.created = options.generatedAt ?? new Date();
+
+  const sheets = (Array.isArray(input) ? input : [{ conta: "Notas Fiscais", result: input }])
+    .slice()
+    .sort(accountSort);
+
+  const freshContext = lastWorkbookContext && Date.now() - lastWorkbookContext.recordedAt < 60_000
+    ? lastWorkbookContext
+    : null;
+  const resolvedOptions: BuildXlsxOptions = {
+    mesConferencia: options.mesConferencia ?? freshContext?.mesConferencia,
+    generatedAt: options.generatedAt ?? freshContext?.generatedAt ?? new Date(),
+  };
+
+  const usedNames = new Set<string>(["geral"]);
+  const mappedSheets = sheets.map((sheet) => {
+    let name = sanitizeSheetName(sheet.conta);
+    let suffix = 2;
+    while (usedNames.has(name.toLowerCase())) {
+      name = sanitizeSheetName(`${sheet.conta}_${suffix++}`);
+    }
+    usedNames.add(name.toLowerCase());
+    return { ...sheet, sheetName: name };
+  });
+
+  const entries: GeneralEntry[] = mappedSheets.map((sheet) => ({
+    conta: sheet.conta,
+    sheetName: sheet.sheetName,
+    saldo: accountBalance(sheet.result),
+  }));
+
+  const generalSheet = workbook.addWorksheet("Geral");
+  populateGeneralSheet(generalSheet, entries, resolvedOptions);
+
+  for (const sheet of mappedSheets) {
+    const worksheet = workbook.addWorksheet(sheet.sheetName);
+    populateSheet(worksheet, sheet.result, sheet.conta);
   }
+
   const buffer = await workbook.xlsx.writeBuffer();
   return new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
 }
