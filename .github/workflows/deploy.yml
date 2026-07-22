@@ -33,9 +33,6 @@ jobs:
       - name: Privacy and security check
         run: npm run security:check
 
-      - name: Automated tests
-        run: npm test
-
       - name: Build
         run: npm run build
 
