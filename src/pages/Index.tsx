@@ -1,15 +1,15 @@
 import { useCallback, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import {
-  FileSpreadsheet,
-  Upload,
-  Download,
-  ShieldCheck,
-  X,
-  Loader2,
-  Sparkles,
   Check,
+  Download,
+  FileSpreadsheet,
   FileText,
+  Loader2,
+  ShieldCheck,
+  Sparkles,
+  Upload,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -23,30 +23,24 @@ import {
 import { toast } from "@/hooks/use-toast";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import {
-  transformRows,
-  buildXlsx,
-  buildPreviousInfoMap,
-  applyPreviousInfo,
   applyPagamentosPdf,
-  type SheetRow,
+  applyPreviousInfo,
+  buildPreviousInfoMap,
+  buildXlsx,
+  transformRows,
   type SheetInput,
+  type SheetRow,
 } from "@/lib/transformSpreadsheet";
-import { parsePagamentosPdf, type PagamentoRow } from "@/lib/parsePagamentosPdf";
-import { useRevealOnScroll } from "@/hooks/useRevealOnScroll";
+import {
+  parsePagamentosPdfDetailed,
+  type PagamentoRow,
+  type PagamentosPdfResult,
+} from "@/lib/parsePagamentosPdf";
+import { setWorkbookCompanyName } from "@/lib/buildXlsx";
 
 const ACCEPTED = [".xlsx", ".xls"];
 
-function formatSize(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-}
-
-function extractConta(filename: string): string | null {
-  const base = filename.replace(/\.(xlsx|xls)$/i, "");
-  const m = base.match(/\d{3,}/);
-  return m ? m[0] : null;
-}
+type StepId = 1 | 2 | 3 | 4 | 5 | 6;
 
 interface RawFile {
   file: File;
@@ -54,21 +48,31 @@ interface RawFile {
   rows: SheetRow[];
 }
 
-type StepId = 1 | 2 | 3 | 4 | 5;
-
 const MESES_NOMES = [
   "janeiro", "fevereiro", "março", "abril", "maio", "junho",
   "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
 ];
 
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function extractConta(filename: string): string | null {
+  const base = filename.replace(/\.(xlsx|xls)$/i, "");
+  const match = base.match(/\d{3,}/);
+  return match ? match[0] : null;
+}
+
 function buildMesOptions(): { value: string; label: string }[] {
   const now = new Date();
   const out: { value: string; label: string }[] = [];
-  for (let y = now.getFullYear() - 1; y <= now.getFullYear() + 1; y++) {
-    for (let m = 1; m <= 12; m++) {
+  for (let year = now.getFullYear() - 2; year <= now.getFullYear() + 1; year++) {
+    for (let month = 1; month <= 12; month++) {
       out.push({
-        value: `${y}-${String(m).padStart(2, "0")}`,
-        label: `${MESES_NOMES[m - 1]}/${y}`,
+        value: `${year}-${String(month).padStart(2, "0")}`,
+        label: `${MESES_NOMES[month - 1]}/${year}`,
       });
     }
   }
@@ -78,94 +82,102 @@ function buildMesOptions(): { value: string; label: string }[] {
 const MES_OPTIONS = buildMesOptions();
 
 function defaultMes(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  const date = new Date();
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 
 function mesLabelExtenso(value: string): string {
-  const [y, m] = value.split("-").map(Number);
-  if (!y || !m) return "";
-  return `${MESES_NOMES[m - 1]} ${y}`;
+  const [year, month] = value.split("-").map(Number);
+  if (!year || !month) return "";
+  return `${MESES_NOMES[month - 1]} ${year}`;
 }
 
 const MESES_REGEX = new RegExp(
-  "(" + MESES_NOMES.join("|") + ")(?:[\\s._-]*(?:de[\\s._-]*)?(\\d{4}|\\d{2}))?",
+  `(${MESES_NOMES.join("|")})(?:[\\s._-]*(?:de[\\s._-]*)?(\\d{4}|\\d{2}))?`,
   "i",
 );
 
 function buildOutputFilename(
-  prevName: string | null,
+  empresa: string,
+  previousName: string | null,
   rawFiles: RawFile[],
   mesConferencia: string,
 ): string {
-  const mesExt = mesLabelExtenso(mesConferencia);
-  const [, mmStr] = mesConferencia.split("-");
-  const suffix = ` (Conferir).xlsx`;
+  const mesExtenso = mesLabelExtenso(mesConferencia);
+  const [, month] = mesConferencia.split("-");
+  const suffix = " (Conferir).xlsx";
 
   const trySubstitute = (name: string): string | null => {
     const base = name.replace(/\.(xlsx|xls)$/i, "");
-    // 1) "abril 2025" / "abril de 2025" / "abril"
-    if (MESES_REGEX.test(base)) {
-      return base.replace(MESES_REGEX, mesExt);
-    }
-    // 2) "mês 04" / "mes 4"
-    const mMes = base.match(/m[êe]s[\s._-]*\d{1,2}/i);
-    if (mMes) {
-      return base.replace(mMes[0], `mês ${mmStr}`);
-    }
-    // 3) "04-2025" / "04.2025" / "04_2025"
-    const mNum = base.match(/\b(\d{1,2})[._-](\d{4})\b/);
-    if (mNum) {
-      return base.replace(mNum[0], mesExt);
-    }
+    if (MESES_REGEX.test(base)) return base.replace(MESES_REGEX, mesExtenso);
+
+    const monthMatch = base.match(/m[êe]s[\s._-]*\d{1,2}/i);
+    if (monthMatch) return base.replace(monthMatch[0], `mês ${month}`);
+
+    const numericMatch = base.match(/\b(\d{1,2})[._-](\d{4})\b/);
+    if (numericMatch) return base.replace(numericMatch[0], mesExtenso);
     return null;
   };
 
-  if (prevName) {
-    const sub = trySubstitute(prevName);
-    if (sub) return `${sub}${suffix}`;
-    const base = prevName.replace(/\.(xlsx|xls)$/i, "");
-    return `${base} - ${mesExt}${suffix}`;
+  if (previousName) {
+    const substituted = trySubstitute(previousName);
+    if (substituted) return `${substituted}${suffix}`;
   }
 
   if (rawFiles.length === 1) {
-    const only = rawFiles[0].file.name;
-    const sub = trySubstitute(only);
-    if (sub) return `${sub}${suffix}`;
-    const base = only.replace(/\.(xlsx|xls)$/i, "");
-    return `${base} - ${mesExt}${suffix}`;
+    const substituted = trySubstitute(rawFiles[0].file.name);
+    if (substituted) return `${substituted}${suffix}`;
   }
-  return `planilhas ${mesExt}${suffix}`;
+
+  const safeCompany = empresa
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9 ]/g, "")
+    .trim()
+    .replace(/\s+/g, " ");
+  return `${safeCompany || "planilhas"} - ${mesExtenso}${suffix}`;
+}
+
+function findPreviousRows(prevSheets: Record<string, SheetRow[]>, conta: string): SheetRow[] | null {
+  if (prevSheets[conta]) return prevSheets[conta];
+  const matchingKey = Object.keys(prevSheets).find((name) => name.match(/\d{3,}/)?.[0] === conta);
+  return matchingKey ? prevSheets[matchingKey] : null;
 }
 
 const Index = () => {
-  const [rawFiles, setRawFiles] = useState<RawFile[]>([]);
-  const [dragOver, setDragOver] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [generating, setGenerating] = useState(false);
+  const [empresa, setEmpresa] = useState("");
+  const [mesConferencia, setMesConferencia] = useState(defaultMes());
+  const [step, setStep] = useState<StepId>(1);
+
   const [prevFile, setPrevFile] = useState<File | null>(null);
   const [prevSheets, setPrevSheets] = useState<Record<string, SheetRow[]>>({});
   const [prevLoading, setPrevLoading] = useState(false);
   const [prevDragOver, setPrevDragOver] = useState(false);
   const [prevSkipped, setPrevSkipped] = useState(false);
+
+  const [rawFiles, setRawFiles] = useState<RawFile[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [pdfRows, setPdfRows] = useState<PagamentoRow[]>([]);
+  const [pdfStats, setPdfStats] = useState<PagamentosPdfResult | null>(null);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [pdfDragOver, setPdfDragOver] = useState(false);
   const [pdfSkipped, setPdfSkipped] = useState(false);
-  const [step, setStep] = useState<StepId>(1);
-  const [mesConferencia, setMesConferencia] = useState<string>(defaultMes());
+
+  const [generating, setGenerating] = useState(false);
+
   const inputRef = useRef<HTMLInputElement>(null);
   const prevInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
 
-  const resetAll = () => {
-    setRawFiles([]);
-    if (inputRef.current) inputRef.current.value = "";
-  };
-
-  const removeRaw = (conta: string) => {
-    setRawFiles((prev) => prev.filter((r) => r.conta !== conta));
+  const stepDone: Record<1 | 2 | 3 | 4 | 5, boolean> = {
+    1: empresa.trim().length >= 2,
+    2: Boolean(mesConferencia),
+    3: prevFile !== null || prevSkipped,
+    4: rawFiles.length > 0,
+    5: pdfFile !== null || pdfSkipped,
   };
 
   const resetPrev = () => {
@@ -174,173 +186,125 @@ const Index = () => {
     if (prevInputRef.current) prevInputRef.current.value = "";
   };
 
+  const resetRaw = () => {
+    setRawFiles([]);
+    if (inputRef.current) inputRef.current.value = "";
+  };
+
   const resetPdf = () => {
     setPdfFile(null);
     setPdfRows([]);
+    setPdfStats(null);
     if (pdfInputRef.current) pdfInputRef.current.value = "";
   };
 
-  const step1Done = prevFile !== null || prevSkipped;
-  const step2Done = !!mesConferencia;
-  const step3Done = rawFiles.length > 0;
-  const step4Done = pdfFile !== null || pdfSkipped;
-
-  const handlePrevFile = useCallback(async (f: File) => {
-    const lower = f.name.toLowerCase();
+  const handlePrevFile = useCallback(async (file: File) => {
+    const lower = file.name.toLowerCase();
     if (!ACCEPTED.some((ext) => lower.endsWith(ext))) {
-      toast({
-        title: "Arquivo inválido",
-        description: "Envie uma planilha .xlsx ou .xls.",
-        variant: "destructive",
-      });
+      toast({ title: "Arquivo inválido", description: "Envie uma planilha .xlsx ou .xls.", variant: "destructive" });
       return;
     }
+
     setPrevLoading(true);
     try {
-      const buf = await f.arrayBuffer();
-      const wb = XLSX.read(buf, { type: "array", cellDates: true });
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
       const sheets: Record<string, SheetRow[]> = {};
       let validCount = 0;
       let lastError: unknown = null;
-      for (const name of wb.SheetNames) {
-        const ws = wb.Sheets[name];
-        const json = XLSX.utils.sheet_to_json<SheetRow>(ws, { defval: "", raw: true });
-        if (json.length === 0) continue;
+
+      for (const name of workbook.SheetNames) {
+        const worksheet = workbook.Sheets[name];
+        const rows = XLSX.utils.sheet_to_json<SheetRow>(worksheet, { defval: "", raw: true });
+        if (rows.length === 0) continue;
         try {
-          buildPreviousInfoMap(json);
-          sheets[name] = json;
+          buildPreviousInfoMap(rows);
+          sheets[name] = rows;
           validCount++;
-        } catch (err) {
-          lastError = err;
+        } catch (error) {
+          lastError = error;
         }
       }
+
       if (validCount === 0) {
         toast({
           title: "Planilha do mês anterior inválida",
-          description:
-            lastError instanceof Error
-              ? lastError.message
-              : "Nenhuma aba com as colunas FORNECEDOR, NOTA FISCAL e INFORMAÇÕES.",
+          description: lastError instanceof Error
+            ? lastError.message
+            : "Nenhuma aba válida com FORNECEDOR, NOTA FISCAL e INFORMAÇÕES.",
           variant: "destructive",
         });
-        setPrevLoading(false);
         return;
       }
-      setPrevFile(f);
+
+      setPrevFile(file);
       setPrevSheets(sheets);
       setPrevSkipped(false);
-    } catch (err) {
-      if (import.meta.env.DEV) console.error(err);
-      toast({
-        title: "Falha ao ler arquivo",
-        description: "Não foi possível ler a planilha do mês anterior.",
-        variant: "destructive",
-      });
+    } catch (error) {
+      if (import.meta.env.DEV) console.error(error);
+      toast({ title: "Falha ao ler arquivo", description: "Não foi possível ler a planilha do mês anterior.", variant: "destructive" });
     } finally {
       setPrevLoading(false);
     }
   }, []);
 
-  const handlePdfFile = useCallback(async (f: File) => {
-    if (!f.name.toLowerCase().endsWith(".pdf")) {
-      toast({
-        title: "Arquivo inválido",
-        description: "Envie um arquivo .pdf.",
-        variant: "destructive",
-      });
-      return;
-    }
-    setPdfLoading(true);
-    try {
-      const rows = await parsePagamentosPdf(f);
-      if (rows.length === 0) {
-        toast({
-          title: "PDF sem títulos reconhecidos",
-          description: "Não foi possível identificar linhas de pagamento.",
-          variant: "destructive",
-        });
-        return;
-      }
-      setPdfFile(f);
-      setPdfRows(rows);
-      setPdfSkipped(false);
-    } catch (err) {
-      if (import.meta.env.DEV) console.error(err);
-      toast({
-        title: "Falha ao ler PDF",
-        description: "Não foi possível processar o arquivo.",
-        variant: "destructive",
-      });
-    } finally {
-      setPdfLoading(false);
-    }
-  }, []);
-
-  const handleFiles = useCallback(async (list: FileList | File[]) => {
+  const handleRawFiles = useCallback(async (list: FileList | File[]) => {
     const files = Array.from(list);
     if (files.length === 0) return;
+
     setLoading(true);
     try {
       const parsed: RawFile[] = [];
       const skipped: string[] = [];
-      for (const f of files) {
-        const lower = f.name.toLowerCase();
+
+      for (const file of files) {
+        const lower = file.name.toLowerCase();
         if (!ACCEPTED.some((ext) => lower.endsWith(ext))) {
-          skipped.push(`${f.name} (formato inválido)`);
+          skipped.push(`${file.name} (formato inválido)`);
           continue;
         }
-        if (f.size === 0) {
-          skipped.push(`${f.name} (vazio)`);
+        if (file.size === 0) {
+          skipped.push(`${file.name} (vazio)`);
           continue;
         }
-        const conta = extractConta(f.name);
+
+        const conta = extractConta(file.name);
         if (!conta) {
-          skipped.push(`${f.name} (sem código no nome — ex.: 81354.xlsx)`);
+          skipped.push(`${file.name} (sem código no nome — ex.: 81354.xls)`);
           continue;
         }
+
         try {
-          const buf = await f.arrayBuffer();
-          const wb = XLSX.read(buf, { type: "array", cellDates: true });
-          const first = wb.SheetNames[0];
-          if (!first) {
-            skipped.push(`${f.name} (sem abas)`);
+          const buffer = await file.arrayBuffer();
+          const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
+          const firstSheet = workbook.SheetNames[0];
+          if (!firstSheet) {
+            skipped.push(`${file.name} (sem abas)`);
             continue;
           }
-          const json = XLSX.utils.sheet_to_json<SheetRow>(wb.Sheets[first], {
+          const rows = XLSX.utils.sheet_to_json<SheetRow>(workbook.Sheets[firstSheet], {
             defval: "",
             raw: true,
           });
-          if (json.length === 0) {
-            skipped.push(`${f.name} (sem linhas)`);
+          if (rows.length === 0) {
+            skipped.push(`${file.name} (sem linhas)`);
             continue;
           }
-          parsed.push({ file: f, conta, rows: json });
-        } catch (err) {
-          if (import.meta.env.DEV) console.error(err);
-          skipped.push(`${f.name} (falha ao ler)`);
+          parsed.push({ file, conta, rows });
+        } catch (error) {
+          if (import.meta.env.DEV) console.error(error);
+          skipped.push(`${file.name} (falha ao ler)`);
         }
       }
-      setRawFiles((prev) => {
-        const map = new Map(prev.map((r) => [r.conta, r]));
-        const duplicates: string[] = [];
-        for (const r of parsed) {
-          if (map.has(r.conta)) duplicates.push(`${r.conta}`);
-          map.set(r.conta, r);
-        }
-        if (duplicates.length > 0) {
-          toast({
-            title: "Conta duplicada substituída",
-            description: `Contas: ${duplicates.join(", ")}`,
-          });
-        }
-        return Array.from(map.values());
+
+      setRawFiles((previous) => {
+        const byAccount = new Map(previous.map((item) => [item.conta, item]));
+        for (const item of parsed) byAccount.set(item.conta, item);
+        return Array.from(byAccount.values()).sort((a, b) => Number(a.conta) - Number(b.conta));
       });
+
       if (skipped.length > 0) {
-        toast({
-          title: "Alguns arquivos foram ignorados",
-          description: skipped.join(" · "),
-          variant: "destructive",
-        });
+        toast({ title: "Alguns arquivos foram ignorados", description: skipped.join(" · "), variant: "destructive" });
       }
     } finally {
       setLoading(false);
@@ -348,67 +312,80 @@ const Index = () => {
     }
   }, []);
 
-  const onDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragOver(false);
-    if (e.dataTransfer.files?.length) handleFiles(e.dataTransfer.files);
-  };
+  const handlePdfFile = useCallback(async (file: File) => {
+    if (!file.name.toLowerCase().endsWith(".pdf")) {
+      toast({ title: "Arquivo inválido", description: "Envie um arquivo .pdf.", variant: "destructive" });
+      return;
+    }
+
+    setPdfLoading(true);
+    try {
+      const result = await parsePagamentosPdfDetailed(file);
+      setPdfFile(file);
+      setPdfRows(result.rows);
+      setPdfStats(result);
+      setPdfSkipped(false);
+      toast({
+        title: "PDF validado",
+        description: `${result.pages} página(s) · ${result.rows.length} título(s) · ${result.uniqueTitles} número(s) diferente(s).`,
+      });
+    } catch (error) {
+      if (import.meta.env.DEV) console.error(error);
+      resetPdf();
+      toast({
+        title: "Falha ao validar PDF",
+        description: error instanceof Error ? error.message : "Não foi possível processar o relatório.",
+        variant: "destructive",
+      });
+    } finally {
+      setPdfLoading(false);
+    }
+  }, []);
 
   const onGenerate = async () => {
-    if (rawFiles.length === 0) return;
+    if (!stepDone[1] || rawFiles.length === 0) return;
     setGenerating(true);
     try {
       const sheets: SheetInput[] = [];
       let totalNotas = 0;
+      const [year, month] = mesConferencia.split("-").map(Number);
+
       for (const raw of rawFiles) {
         const result = transformRows(raw.rows);
-        const prev = prevSheets[raw.conta];
-        if (prev && prev.length > 0) {
-          const map = buildPreviousInfoMap(prev);
-          applyPreviousInfo(result.notas, map);
+        const previousRows = findPreviousRows(prevSheets, raw.conta);
+        if (previousRows?.length) {
+          applyPreviousInfo(result.notas, buildPreviousInfoMap(previousRows));
         }
         if (pdfRows.length > 0) {
-          const [ay, am] = mesConferencia.split("-").map(Number);
           applyPagamentosPdf(result.notas, pdfRows, {
-            mesConferencia: { ano: ay, mes: am },
+            mesConferencia: { ano: year, mes: month },
           });
         }
         sheets.push({ conta: raw.conta, result });
         totalNotas += result.notas.length;
       }
-      sheets.sort((a, b) => {
-        const na = parseInt(String(a.conta).match(/\d+/)?.[0] ?? "", 10);
-        const nb = parseInt(String(b.conta).match(/\d+/)?.[0] ?? "", 10);
-        const aNum = Number.isFinite(na);
-        const bNum = Number.isFinite(nb);
-        if (aNum && bNum) return na - nb;
-        if (aNum) return -1;
-        if (bNum) return 1;
-        return String(a.conta).localeCompare(String(b.conta));
-      });
+
+      sheets.sort((a, b) => Number(a.conta) - Number(b.conta));
+      setWorkbookCompanyName(empresa);
       const blob = await buildXlsx(sheets);
       const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = buildOutputFilename(
-        prevFile?.name ?? null,
-        rawFiles,
-        mesConferencia,
-      );
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = buildOutputFilename(empresa, prevFile?.name ?? null, rawFiles, mesConferencia);
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
       URL.revokeObjectURL(url);
+
       toast({
         title: "Planilha gerada",
-        description: `${sheets.length} aba(s) · ${totalNotas} nota(s) exportada(s). Nenhum dado foi armazenado.`,
+        description: `${sheets.length} aba(s) · ${totalNotas} nota(s). Nenhum dado foi armazenado.`,
       });
-    } catch (err) {
-      if (import.meta.env.DEV) console.error(err);
-      const msg = err instanceof Error ? err.message : "Tente novamente com outro arquivo.";
+    } catch (error) {
+      if (import.meta.env.DEV) console.error(error);
       toast({
         title: "Erro ao gerar planilha",
-        description: msg,
+        description: error instanceof Error ? error.message : "Tente novamente com outro arquivo.",
         variant: "destructive",
       });
     } finally {
@@ -416,137 +393,59 @@ const Index = () => {
     }
   };
 
-  const goNext = (target: StepId) => setStep(target);
-
-  const revealPrivacy = useRevealOnScroll<HTMLDivElement>();
-  const revealStepper = useRevealOnScroll<HTMLDivElement>();
-  const revealCard = useRevealOnScroll<HTMLDivElement>();
-
   return (
     <div className="min-h-screen">
-      <header className="border-b border-border/60 backdrop-blur-xl bg-background/40 sticky top-0 z-10">
+      <header className="sticky top-0 z-20 border-b border-border/60 bg-background/80 backdrop-blur-xl">
         <div className="container mx-auto flex items-center justify-between py-5">
           <div className="flex items-center gap-3">
-            <div className="relative flex h-11 w-11 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-[var(--shadow-glow)]">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-[var(--shadow-glow)]">
               <FileSpreadsheet className="h-5 w-5" />
-              <div className="absolute inset-0 rounded-xl bg-primary/20 blur-md -z-10" />
             </div>
             <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground font-mono">Alterdata · Conferência</p>
+              <p className="font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">Alterdata · Conferência</p>
               <h1 className="text-lg font-semibold tracking-tight">Conversor de Planilhas</h1>
-              <p className="hidden sm:block text-[11px] text-muted-foreground mt-0.5">
-                Conversor de Planilhas de fornecedores para os Cont's
-              </p>
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <div className="hidden sm:flex items-center gap-2 text-xs text-muted-foreground">
-              <span className="h-2 w-2 rounded-full bg-primary shadow-[0_0_10px_hsl(var(--primary))]" />
-              processamento local
-            </div>
+            <span className="hidden text-xs text-muted-foreground sm:block">processamento local</span>
             <ThemeToggle />
           </div>
         </div>
       </header>
 
-      <main className="container mx-auto max-w-4xl px-4 py-14 space-y-10">
-        <section className="reveal is-visible text-center space-y-5 max-w-2xl mx-auto">
-          <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-card/40 px-3 py-1 text-xs text-muted-foreground font-mono">
+      <main className="container mx-auto max-w-5xl space-y-9 px-4 py-12">
+        <section className="mx-auto max-w-2xl space-y-5 text-center">
+          <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-card/40 px-3 py-1 font-mono text-xs text-muted-foreground">
             <Sparkles className="h-3 w-3 text-primary" />
             zero uploads · zero storage
           </div>
-          <h2 className="text-4xl sm:text-5xl font-semibold tracking-tight leading-[1.05]">
-            Transforme sua planilha bruta em{" "}
-            <span
-              className="bg-clip-text text-transparent"
-              style={{ backgroundImage: "var(--gradient-primary)" }}
-            >
-              relatório formatado
-            </span>
+          <h2 className="text-4xl font-semibold tracking-tight sm:text-5xl">
+            Transforme sua planilha bruta em relatório formatado
           </h2>
-          <p className="text-muted-foreground text-base leading-relaxed">
-            Envie o export do Alterdata e receba uma planilha padronizada com fornecedor, nota fiscal e valores organizados em segundos.
+          <p className="text-muted-foreground">
+            O aplicativo cruza as planilhas brutas com o relatório do ERP e gera um arquivo de conferência organizado.
           </p>
         </section>
 
-        <div ref={revealPrivacy} className="reveal flex items-start gap-3 rounded-2xl border border-accent/40 bg-accent/20 backdrop-blur px-5 py-4 text-sm text-accent-foreground">
+        <div className="flex items-start gap-3 rounded-2xl border border-accent/40 bg-accent/20 px-5 py-4 text-sm">
           <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-          <p className="text-muted-foreground">
-            Seus arquivos são processados localmente no navegador. O conteúdo não é enviado nem armazenado em servidores.
-          </p>
+          <p className="text-muted-foreground">Seus arquivos são processados localmente no navegador e não são armazenados.</p>
         </div>
 
-        <div ref={revealStepper} className="reveal">
-          <Stepper
-            current={step}
-            setStep={setStep}
-            done={{ 1: step1Done, 2: step2Done, 3: step3Done, 4: step4Done }}
-          />
-        </div>
-
-        <div ref={revealCard} className="reveal is-visible" key={`step-${step}`}>
+        <Stepper current={step} setStep={setStep} done={stepDone} />
 
         {step === 1 && (
-          <StepCard
-            step="01"
-            title="Planilha do mês anterior"
-            badge="opcional"
-            description="Um único arquivo com uma aba por conta (mesmo código do mês atual). Importa a coluna INFORMAÇÕES."
-          >
-            <div className="space-y-4">
-              {!prevSkipped ? (
-                !prevFile ? (
-                  <Dropzone
-                    inputRef={prevInputRef}
-                    dragOver={prevDragOver}
-                    setDragOver={setPrevDragOver}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      setPrevDragOver(false);
-                      const f = e.dataTransfer.files?.[0];
-                      if (f) handlePrevFile(f);
-                    }}
-                    onSelect={(fs) => {
-                      const f = Array.isArray(fs) ? fs[0] : fs[0];
-                      if (f) handlePrevFile(f);
-                    }}
-                    loading={prevLoading}
-                    label="Solte a planilha do mês anterior aqui"
-                  />
-                ) : (
-                  <FileChip
-                    name={prevFile.name}
-                    info={`${formatSize(prevFile.size)} · ${Object.keys(prevSheets).length} aba(s): ${Object.keys(prevSheets).join(", ")}`}
-                    onRemove={resetPrev}
-                  />
-                )
-              ) : (
-                <div className="rounded-2xl border border-border/60 bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
-                  Sem planilha do mês anterior — a coluna INFORMAÇÕES ficará em branco.
-                </div>
-              )}
-
-              <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-                <Checkbox
-                  checked={prevSkipped}
-                  onCheckedChange={(v) => {
-                    const on = v === true;
-                    setPrevSkipped(on);
-                    if (on) resetPrev();
-                  }}
-                />
-                Não tenho a planilha do mês anterior
-              </label>
-
-              <div className="flex justify-end">
-                <Button
-                  onClick={() => goNext(2)}
-                  disabled={!step1Done}
-                  className="bg-primary text-primary-foreground hover:bg-primary/90"
-                >
-                  Continuar
-                </Button>
-              </div>
+          <StepCard step="01" title="Empresa" description="Informe o nome da empresa que aparecerá no resumo da planilha.">
+            <StepNavigation next={() => setStep(2)} nextDisabled={!stepDone[1]} />
+            <div className="space-y-2">
+              <label htmlFor="empresa" className="text-sm font-medium">Nome da empresa</label>
+              <input
+                id="empresa"
+                value={empresa}
+                onChange={(event) => setEmpresa(event.target.value)}
+                placeholder="Ex.: Instituto de Medicina Nuclear"
+                className="h-11 w-full rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+              />
             </div>
           </StepCard>
         )}
@@ -555,84 +454,70 @@ const Index = () => {
           <StepCard
             step="02"
             title="Mês de conferência"
-            description="Selecione o mês que você está conferindo. Datas de pagamento em meses anteriores ou no próprio mês selecionado serão omitidas da coluna INFORMAÇÕES (exceto pagamentos no último dia do mês, que ficam com aviso)."
+            description="O mês selecionado define quais parcelas futuras serão exibidas. Parcelas do último dia do mês permanecem com aviso."
           >
-            <div className="space-y-4">
-              <Select value={mesConferencia} onValueChange={setMesConferencia}>
-                <SelectTrigger className="w-full sm:w-64">
-                  <SelectValue placeholder="Selecione o mês" />
-                </SelectTrigger>
-                <SelectContent className="max-h-72">
-                  {MES_OPTIONS.map((o) => (
-                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <div className="flex justify-between">
-                <Button variant="ghost" onClick={() => goNext(1)}>Voltar</Button>
-                <Button
-                  onClick={() => goNext(3)}
-                  disabled={!step2Done}
-                  className="bg-primary text-primary-foreground hover:bg-primary/90"
-                >
-                  Continuar
-                </Button>
-              </div>
-            </div>
+            <StepNavigation back={() => setStep(1)} next={() => setStep(3)} nextDisabled={!stepDone[2]} />
+            <Select value={mesConferencia} onValueChange={setMesConferencia}>
+              <SelectTrigger className="w-full sm:w-72"><SelectValue placeholder="Selecione o mês" /></SelectTrigger>
+              <SelectContent className="max-h-72">
+                {MES_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </StepCard>
         )}
 
         {step === 3 && (
           <StepCard
             step="03"
-            title="Planilhas brutas do mês atual"
-            description="Envie uma ou mais planilhas. O nome do arquivo deve conter o código da conta (ex.: 81354.xlsx). Cada arquivo vira uma aba na planilha final."
+            title="Planilha do mês anterior"
+            badge="opcional"
+            description="Importa as informações existentes e preserva mensagens anteriores quando ainda forem aplicáveis."
           >
+            <StepNavigation back={() => setStep(2)} next={() => setStep(4)} nextDisabled={!stepDone[3]} />
             <div className="space-y-4">
-              <Dropzone
-                inputRef={inputRef}
-                dragOver={dragOver}
-                setDragOver={setDragOver}
-                onDrop={onDrop}
-                onSelect={handleFiles}
-                loading={loading}
-                multiple
-                label={
-                  rawFiles.length > 0
-                    ? "Adicionar mais arquivos"
-                    : "Solte os arquivos aqui"
-                }
-              />
-              {rawFiles.length > 0 && (
-                <div className="space-y-2">
-                  {rawFiles.map((r) => (
-                    <FileChip
-                      key={r.conta}
-                      name={r.file.name}
-                      info={`aba ${r.conta} · ${formatSize(r.file.size)} · ${r.rows.length} linhas`}
-                      onRemove={() => removeRaw(r.conta)}
-                    />
-                  ))}
-                  {rawFiles.length > 1 && (
-                    <button
-                      onClick={resetAll}
-                      className="text-xs text-muted-foreground hover:text-foreground font-mono"
-                    >
-                      limpar todos
-                    </button>
-                  )}
-                </div>
+              {!prevSkipped ? (
+                prevFile ? (
+                  <FileChip
+                    name={prevFile.name}
+                    info={`${formatSize(prevFile.size)} · ${Object.keys(prevSheets).length} aba(s)`}
+                    onRemove={resetPrev}
+                  />
+                ) : (
+                  <Dropzone
+                    inputRef={prevInputRef}
+                    dragOver={prevDragOver}
+                    setDragOver={setPrevDragOver}
+                    loading={prevLoading}
+                    label="Solte a planilha do mês anterior aqui"
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      setPrevDragOver(false);
+                      const file = event.dataTransfer.files?.[0];
+                      if (file) handlePrevFile(file);
+                    }}
+                    onSelect={(files) => {
+                      const file = Array.from(files)[0];
+                      if (file) handlePrevFile(file);
+                    }}
+                  />
+                )
+              ) : (
+                <InfoBox>Sem planilha anterior. As informações serão preenchidas somente pelo PDF atual.</InfoBox>
               )}
-              <div className="flex justify-between">
-                <Button variant="ghost" onClick={() => goNext(2)}>Voltar</Button>
-                <Button
-                  onClick={() => goNext(4)}
-                  disabled={!step3Done}
-                  className="bg-primary text-primary-foreground hover:bg-primary/90"
-                >
-                  Continuar
-                </Button>
-              </div>
+
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+                <Checkbox
+                  checked={prevSkipped}
+                  onCheckedChange={(value) => {
+                    const checked = value === true;
+                    setPrevSkipped(checked);
+                    if (checked) resetPrev();
+                  }}
+                />
+                Não tenho a planilha do mês anterior
+              </label>
             </div>
           </StepCard>
         )}
@@ -640,111 +525,141 @@ const Index = () => {
         {step === 4 && (
           <StepCard
             step="04"
-            title="PDF de pagamentos"
-            badge="opcional"
-            description="Relatório em PDF com todos os pagamentos do mês. Usado para preencher a coluna INFORMAÇÕES com as parcelas em aberto."
+            title="Planilhas brutas"
+            description="Envie uma ou mais planilhas. O nome do arquivo deve conter o número da conta, como 81354.xls."
           >
+            <StepNavigation back={() => setStep(3)} next={() => setStep(5)} nextDisabled={!stepDone[4]} />
             <div className="space-y-4">
-              {!pdfSkipped ? (
-                !pdfFile ? (
-                  <Dropzone
-                    inputRef={pdfInputRef}
-                    dragOver={pdfDragOver}
-                    setDragOver={setPdfDragOver}
-                    accept=".pdf"
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      setPdfDragOver(false);
-                      const f = e.dataTransfer.files?.[0];
-                      if (f) handlePdfFile(f);
-                    }}
-                    onSelect={(fs) => {
-                      const f = Array.isArray(fs) ? fs[0] : fs[0];
-                      if (f) handlePdfFile(f);
-                    }}
-                    loading={pdfLoading}
-                    label="Solte o PDF de pagamentos aqui"
-                  />
-                ) : (
-                  <FileChip
-                    name={pdfFile.name}
-                    info={`${formatSize(pdfFile.size)} · ${pdfRows.length} título(s) lidos`}
-                    onRemove={resetPdf}
-                    icon="pdf"
-                  />
-                )
-              ) : (
-                <div className="rounded-2xl border border-border/60 bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
-                  Sem PDF de pagamentos — a coluna INFORMAÇÕES virá apenas do mês anterior (se houver).
+              <Dropzone
+                inputRef={inputRef}
+                dragOver={dragOver}
+                setDragOver={setDragOver}
+                loading={loading}
+                multiple
+                label={rawFiles.length > 0 ? "Adicionar mais planilhas" : "Solte as planilhas brutas aqui"}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  setDragOver(false);
+                  if (event.dataTransfer.files?.length) handleRawFiles(event.dataTransfer.files);
+                }}
+                onSelect={handleRawFiles}
+              />
+
+              {rawFiles.length > 0 && (
+                <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
+                  {rawFiles.map((raw) => (
+                    <FileChip
+                      key={raw.conta}
+                      name={raw.file.name}
+                      info={`conta ${raw.conta} · ${formatSize(raw.file.size)} · ${raw.rows.length} linhas`}
+                      onRemove={() => setRawFiles((items) => items.filter((item) => item.conta !== raw.conta))}
+                    />
+                  ))}
+                  {rawFiles.length > 1 && (
+                    <button type="button" onClick={resetRaw} className="font-mono text-xs text-muted-foreground hover:text-foreground">
+                      limpar todos
+                    </button>
+                  )}
                 </div>
               )}
-
-              <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-                <Checkbox
-                  checked={pdfSkipped}
-                  onCheckedChange={(v) => {
-                    const on = v === true;
-                    setPdfSkipped(on);
-                    if (on) resetPdf();
-                  }}
-                />
-                Não tenho o PDF de pagamentos
-              </label>
-
-              <div className="flex justify-between">
-                <Button variant="ghost" onClick={() => goNext(3)}>Voltar</Button>
-                <Button
-                  onClick={() => goNext(5)}
-                  disabled={!step4Done}
-                  className="bg-primary text-primary-foreground hover:bg-primary/90"
-                >
-                  Continuar
-                </Button>
-              </div>
             </div>
           </StepCard>
         )}
 
         {step === 5 && (
-          <div className="relative overflow-hidden rounded-3xl border border-primary/30 bg-[var(--gradient-surface)] p-8 shadow-[var(--shadow-soft)]">
-            <div className="absolute -top-24 -right-24 h-64 w-64 rounded-full bg-primary/20 blur-3xl" />
-            <div className="relative space-y-6">
-              <div className="space-y-1">
-                <p className="text-xs uppercase tracking-[0.25em] text-primary font-mono">05 · finalizar</p>
-                <h3 className="text-2xl font-semibold tracking-tight">
-                  Gerar planilha ({rawFiles.length} aba{rawFiles.length > 1 ? "s" : ""})
-                </h3>
+          <StepCard
+            step="05"
+            title="PDF de pagamentos"
+            badge="opcional"
+            description="O PDF é validado antes da geração para evitar que uma falha de leitura marque todas as NFs como ausentes no ERP."
+          >
+            <StepNavigation back={() => setStep(4)} next={() => setStep(6)} nextDisabled={!stepDone[5]} />
+            <div className="space-y-4">
+              {!pdfSkipped ? (
+                pdfFile ? (
+                  <>
+                    <FileChip
+                      name={pdfFile.name}
+                      info={`${formatSize(pdfFile.size)} · ${pdfRows.length} títulos lidos`}
+                      onRemove={resetPdf}
+                      icon="pdf"
+                    />
+                    {pdfStats && (
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        <Metric label="Páginas" value={String(pdfStats.pages)} />
+                        <Metric label="Títulos lidos" value={String(pdfStats.rows.length)} />
+                        <Metric label="Números diferentes" value={String(pdfStats.uniqueTitles)} />
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <Dropzone
+                    inputRef={pdfInputRef}
+                    dragOver={pdfDragOver}
+                    setDragOver={setPdfDragOver}
+                    loading={pdfLoading}
+                    accept=".pdf"
+                    label="Solte o PDF de pagamentos aqui"
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      setPdfDragOver(false);
+                      const file = event.dataTransfer.files?.[0];
+                      if (file) handlePdfFile(file);
+                    }}
+                    onSelect={(files) => {
+                      const file = Array.from(files)[0];
+                      if (file) handlePdfFile(file);
+                    }}
+                  />
+                )
+              ) : (
+                <InfoBox>Sem PDF. A planilha utilizará apenas as informações herdadas do mês anterior.</InfoBox>
+              )}
+
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+                <Checkbox
+                  checked={pdfSkipped}
+                  onCheckedChange={(value) => {
+                    const checked = value === true;
+                    setPdfSkipped(checked);
+                    if (checked) resetPdf();
+                  }}
+                />
+                Não tenho o PDF de pagamentos
+              </label>
+            </div>
+          </StepCard>
+        )}
+
+        {step === 6 && (
+          <section className="relative overflow-hidden rounded-3xl border border-primary/30 bg-[var(--gradient-surface)] p-6 shadow-[var(--shadow-soft)] sm:p-8">
+            <StepNavigation back={() => setStep(5)} />
+            <div className="space-y-6">
+              <div>
+                <p className="font-mono text-xs uppercase tracking-[0.25em] text-primary">06 · finalizar</p>
+                <h3 className="mt-1 text-2xl font-semibold">Gerar planilha</h3>
               </div>
               <ul className="space-y-2 text-sm">
-                <SummaryRow ok={prevFile !== null} label={prevFile ? `Mês anterior: ${Object.keys(prevSheets).length} aba(s)` : "Mês anterior: —"} />
-                <SummaryRow ok={!!mesConferencia} label={`Mês de conferência: ${MES_OPTIONS.find((o) => o.value === mesConferencia)?.label ?? "—"}`} />
-                <SummaryRow ok={rawFiles.length > 0} label={`Brutas: ${rawFiles.length} arquivo(s)`} />
-                <SummaryRow ok={pdfFile !== null} label={pdfFile ? `PDF: ${pdfRows.length} título(s)` : "PDF: —"} />
+                <SummaryRow ok={stepDone[1]} label={`Empresa: ${empresa || "—"}`} />
+                <SummaryRow ok={stepDone[2]} label={`Mês: ${MES_OPTIONS.find((item) => item.value === mesConferencia)?.label ?? "—"}`} />
+                <SummaryRow ok={prevFile !== null} label={prevFile ? `Mês anterior: ${Object.keys(prevSheets).length} aba(s)` : "Mês anterior: não enviado"} />
+                <SummaryRow ok={rawFiles.length > 0} label={`Planilhas brutas: ${rawFiles.length} arquivo(s)`} />
+                <SummaryRow ok={pdfFile !== null} label={pdfFile ? `PDF: ${pdfRows.length} título(s) validados` : "PDF: não enviado"} />
               </ul>
-              <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <Button variant="ghost" onClick={() => goNext(4)}>Voltar</Button>
-                <Button
-                  size="lg"
-                  onClick={onGenerate}
-                  disabled={generating || rawFiles.length === 0}
-                  className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-[var(--shadow-glow)] font-semibold"
-                >
-                  {generating ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <Download className="mr-2 h-4 w-4" />
-                  )}
-                  Gerar planilha
-                </Button>
-              </div>
+              <Button
+                size="lg"
+                onClick={onGenerate}
+                disabled={generating || !stepDone[1] || rawFiles.length === 0}
+                className="w-full bg-primary font-semibold text-primary-foreground shadow-[var(--shadow-glow)] hover:bg-primary/90 sm:w-auto"
+              >
+                {generating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+                Gerar planilha
+              </Button>
             </div>
-          </div>
+          </section>
         )}
-        </div>
 
-        <footer className="pt-8 pb-4 text-center text-xs text-muted-foreground font-mono">
-          feito para conferência interna
-        </footer>
+        <footer className="pb-4 pt-8 text-center font-mono text-xs text-muted-foreground">feito para conferência interna</footer>
       </main>
     </div>
   );
@@ -764,23 +679,38 @@ function StepCard({
   children: React.ReactNode;
 }) {
   return (
-    <section className="group rounded-3xl border border-border/60 bg-card/60 backdrop-blur p-6 sm:p-8 transition-colors hover:border-primary/40">
-      <div className="flex items-start gap-4 mb-5">
-        <span className="font-mono text-xs text-primary tracking-[0.2em] pt-1">{step}</span>
+    <section className="rounded-3xl border border-border/60 bg-card/60 p-6 backdrop-blur sm:p-8">
+      <div className="mb-5 flex items-start gap-4">
+        <span className="pt-1 font-mono text-xs tracking-[0.2em] text-primary">{step}</span>
         <div className="flex-1">
           <div className="flex items-center gap-2">
             <h3 className="text-lg font-semibold tracking-tight">{title}</h3>
-            {badge && (
-              <span className="rounded-full border border-border/60 px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
-                {badge}
-              </span>
-            )}
+            {badge && <span className="rounded-full border border-border/60 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{badge}</span>}
           </div>
           <p className="mt-1 text-sm text-muted-foreground">{description}</p>
         </div>
       </div>
-      {children}
+      <div className="space-y-5">{children}</div>
     </section>
+  );
+}
+
+function StepNavigation({
+  back,
+  next,
+  nextDisabled,
+}: {
+  back?: () => void;
+  next?: () => void;
+  nextDisabled?: boolean;
+}) {
+  return (
+    <div className="sticky top-[88px] z-10 flex items-center justify-between rounded-xl border border-border/60 bg-background/95 px-3 py-2 shadow-sm backdrop-blur">
+      <Button variant="ghost" onClick={back} disabled={!back}>Voltar</Button>
+      {next && (
+        <Button onClick={next} disabled={nextDisabled} className="bg-primary text-primary-foreground hover:bg-primary/90">Continuar</Button>
+      )}
+    </div>
   );
 }
 
@@ -797,8 +727,8 @@ function Dropzone({
 }: {
   inputRef: React.RefObject<HTMLInputElement>;
   dragOver: boolean;
-  setDragOver: (v: boolean) => void;
-  onDrop: (e: React.DragEvent) => void;
+  setDragOver: (value: boolean) => void;
+  onDrop: (event: React.DragEvent) => void;
   onSelect: (files: FileList | File[]) => void;
   loading: boolean;
   label: string;
@@ -807,58 +737,59 @@ function Dropzone({
 }) {
   return (
     <div
-      onDragOver={(e) => {
-        e.preventDefault();
+      onDragOver={(event) => {
+        event.preventDefault();
         setDragOver(true);
       }}
       onDragLeave={() => setDragOver(false)}
       onDrop={onDrop}
       onClick={() => inputRef.current?.click()}
-      className={`group/drop relative flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed px-6 py-12 text-center transition-all ${
-        dragOver
-          ? "border-primary bg-primary/5 scale-[1.01]"
-          : "border-border/70 hover:border-primary/60 hover:bg-primary/5"
+      className={`group relative flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed px-6 py-12 text-center transition-all ${
+        dragOver ? "scale-[1.01] border-primary bg-primary/5" : "border-border/70 hover:border-primary/60 hover:bg-primary/5"
       }`}
     >
-      <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary transition-transform group-hover/drop:scale-110">
+      <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
         <Upload className="h-5 w-5" />
       </div>
-      <p className="font-medium">
-        {loading ? "Lendo arquivo..." : label}
-      </p>
-      <p className="mt-1 text-xs text-muted-foreground font-mono">
-        clique ou arraste · {accept ?? ".xlsx .xls"}{multiple ? " · múltiplos" : ""}
-      </p>
+      <p className="font-medium">{loading ? "Lendo e validando..." : label}</p>
+      <p className="mt-1 font-mono text-xs text-muted-foreground">clique ou arraste · {accept ?? ".xlsx .xls"}{multiple ? " · múltiplos" : ""}</p>
       <input
         ref={inputRef}
         type="file"
         accept={accept ?? ".xlsx,.xls"}
         multiple={multiple}
         className="hidden"
-        onChange={(e) => {
-          if (e.target.files?.length) onSelect(e.target.files);
+        onChange={(event) => {
+          if (event.target.files?.length) onSelect(event.target.files);
         }}
       />
     </div>
   );
 }
 
-function FileChip({ name, info, onRemove, icon }: { name: string; info: string; onRemove: () => void; icon?: "sheet" | "pdf" }) {
+function FileChip({
+  name,
+  info,
+  onRemove,
+  icon,
+}: {
+  name: string;
+  info: string;
+  onRemove: () => void;
+  icon?: "sheet" | "pdf";
+}) {
   return (
     <div className="flex items-center justify-between rounded-2xl border border-primary/30 bg-primary/5 px-4 py-3">
-      <div className="flex items-center gap-3 min-w-0">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/15 text-primary shrink-0">
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-primary">
           {icon === "pdf" ? <FileText className="h-5 w-5" /> : <FileSpreadsheet className="h-5 w-5" />}
         </div>
         <div className="min-w-0">
-          <p className="font-medium truncate">{name}</p>
-          <p className="text-xs text-muted-foreground font-mono">{info}</p>
+          <p className="truncate font-medium">{name}</p>
+          <p className="font-mono text-xs text-muted-foreground">{info}</p>
         </div>
       </div>
-      <Button variant="ghost" size="sm" onClick={onRemove} className="shrink-0">
-        <X className="mr-1 h-4 w-4" />
-        Remover
-      </Button>
+      <Button variant="ghost" size="sm" onClick={onRemove} className="shrink-0"><X className="mr-1 h-4 w-4" />Remover</Button>
     </div>
   );
 }
@@ -869,60 +800,52 @@ function Stepper({
   done,
 }: {
   current: StepId;
-  setStep: (s: StepId) => void;
-  done: Record<1 | 2 | 3 | 4, boolean>;
+  setStep: (step: StepId) => void;
+  done: Record<1 | 2 | 3 | 4 | 5, boolean>;
 }) {
   const steps: { id: StepId; label: string }[] = [
-    { id: 1, label: "Mês anterior" },
+    { id: 1, label: "Empresa" },
     { id: 2, label: "Mês" },
-    { id: 3, label: "Brutas" },
-    { id: 4, label: "PDF" },
-    { id: 5, label: "Gerar" },
+    { id: 3, label: "Mês anterior" },
+    { id: 4, label: "Brutas" },
+    { id: 5, label: "PDF" },
+    { id: 6, label: "Gerar" },
   ];
-  // Só libera clique na etapa N se todas as anteriores (1..N-1) estiverem concluídas.
+
   const canReach = (id: StepId): boolean => {
-    for (let k = 1; k < id; k++) {
-      if (!done[k as 1 | 2 | 3 | 4]) return false;
+    for (let index = 1; index < id; index++) {
+      if (!done[index as 1 | 2 | 3 | 4 | 5]) return false;
     }
     return true;
   };
+
   return (
     <ol className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
-      {steps.map((s, i) => {
-        const isCurrent = current === s.id;
-        const isDone = s.id !== 5 && done[s.id as 1 | 2 | 3 | 4];
-        const canJump = !isCurrent && canReach(s.id);
+      {steps.map((item, index) => {
+        const isCurrent = current === item.id;
+        const isDone = item.id !== 6 && done[item.id as 1 | 2 | 3 | 4 | 5];
+        const canJump = !isCurrent && canReach(item.id);
         const disabled = !isCurrent && !canJump;
         return (
-          <li key={s.id} className="flex items-center gap-2 sm:gap-3">
+          <li key={item.id} className="flex items-center gap-2 sm:gap-3">
             <button
               type="button"
               disabled={disabled}
-              onClick={() => canJump && setStep(s.id)}
-              className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-mono transition-colors ${
+              onClick={() => canJump && setStep(item.id)}
+              className={`flex items-center gap-2 rounded-full border px-3 py-1.5 font-mono text-xs transition-colors ${
                 isCurrent
                   ? "border-primary bg-primary/10 text-primary"
                   : isDone
-                  ? "border-border/60 bg-card/60 text-foreground hover:border-primary/40"
-                  : "border-border/40 bg-transparent text-muted-foreground"
-              } ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
+                    ? "border-border/60 bg-card/60 text-foreground hover:border-primary/40"
+                    : "border-border/40 bg-transparent text-muted-foreground"
+              } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
             >
-              <span
-                className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] ${
-                  isCurrent
-                    ? "bg-primary/20 text-primary"
-                    : isDone
-                    ? "bg-transparent border border-border/60 text-muted-foreground"
-                    : "bg-muted text-muted-foreground"
-                }`}
-              >
-                {isCurrent ? s.id : isDone ? <Check className="h-3 w-3" /> : s.id}
+              <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] ${isCurrent ? "bg-primary/20" : "bg-muted"}`}>
+                {isCurrent ? item.id : isDone ? <Check className="h-3 w-3" /> : item.id}
               </span>
-              {s.label}
+              {item.label}
             </button>
-            {i < steps.length - 1 && (
-              <span className="h-px w-4 bg-border/60 sm:w-6" />
-            )}
+            {index < steps.length - 1 && <span className="h-px w-4 bg-border/60 sm:w-6" />}
           </li>
         );
       })}
@@ -933,15 +856,24 @@ function Stepper({
 function SummaryRow({ ok, label }: { ok: boolean; label: string }) {
   return (
     <li className="flex items-center gap-2 text-muted-foreground">
-      <span
-        className={`flex h-5 w-5 items-center justify-center rounded-full ${
-          ok ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"
-        }`}
-      >
+      <span className={`flex h-5 w-5 items-center justify-center rounded-full ${ok ? "bg-primary/20 text-primary" : "bg-muted"}`}>
         {ok ? <Check className="h-3 w-3" /> : <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40" />}
       </span>
       {label}
     </li>
+  );
+}
+
+function InfoBox({ children }: { children: React.ReactNode }) {
+  return <div className="rounded-2xl border border-border/60 bg-muted/30 px-4 py-3 text-sm text-muted-foreground">{children}</div>;
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-border/60 bg-card px-4 py-3 text-center">
+      <p className="text-2xl font-semibold">{value}</p>
+      <p className="text-xs text-muted-foreground">{label}</p>
+    </div>
   );
 }
 
