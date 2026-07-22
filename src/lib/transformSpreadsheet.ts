@@ -1,5 +1,5 @@
-import ExcelJS from "exceljs";
 import type { PagamentoRow } from "./parsePagamentosPdf";
+import { buildXlsxFile } from "./buildXlsx";
 
 export type SheetRow = Record<string, unknown>;
 
@@ -25,12 +25,12 @@ const HIST_KEYS = ["Descrição histórico", "Descricao historico", "DescriÃ§�
 const VALOR_KEYS = ["Valor"];
 const DATA_KEYS = ["Data"];
 const PREV_FORNECEDOR_KEYS = ["FORNECEDOR", "Fornecedor"];
-const PREV_NOTA_KEYS = ["NOTA FISCAL", "Nota Fiscal", "NotaFiscal", "NF", "N.F.", "N F", "Nº NF", "NUMERO NF", "NÚMERO NF", "Nota"];
-const PREV_INFO_KEYS = ["INFORMAÇÕES", "INFORMACOES", "Informações", "Informacoes"];
-const MONTH_NAMES = [
-  "janeiro", "fevereiro", "março", "abril", "maio", "junho",
-  "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+const PREV_NOTA_KEYS = [
+  "NOTA FISCAL", "Nota Fiscal", "NotaFiscal", "NF", "N.F.", "N F", "Nº NF",
+  "NUMERO NF", "NÚMERO NF", "Nota",
 ];
+const PREV_INFO_KEYS = ["INFORMAÇÕES", "INFORMACOES", "Informações", "Informacoes"];
+const MONEY_TOLERANCE = 0.005;
 
 let lastWorkbookContext: (BuildXlsxOptions & { recordedAt: number }) | null = null;
 
@@ -60,44 +60,140 @@ function removeAccents(value: string): string {
 
 function normNota(value: unknown): string {
   if (value == null) return "";
-  return String(value).trim().replace(/\.0+$/, "").replace(/\D+/g, "").replace(/^0+/, "");
+  return String(value).trim().replace(/\.0+$/, "").replace(/\D+/g, "").replace(/^0+/, "") || "0";
 }
 
-function normFornecedor(value: unknown): string {
-  if (value == null) return "";
-  return removeAccents(String(value)).toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
-}
-
-const STOP_WORDS = new Set([
-  "ltda", "me", "epp", "sa", "eireli", "cia", "de", "da", "do", "das", "dos", "com", "e",
-  "servicos", "servico", "medicos", "medico", "medica", "medicas", "assistencia", "saude",
-  "comercio", "comercial", "industria", "industrial", "produtos", "produto", "distribuidora",
-  "transportes", "transporte", "brasil", "nacional", "importacao", "exportacao", "solucoes",
-  "tecnologia", "sistemas", "engenharia", "construcao", "hospitalar", "hospital", "clinica",
-  "clinicas", "diagnostico", "farmaceutica", "farmaceuticos", "informatica",
+const LEGAL_SUFFIXES = new Set([
+  "ltda", "me", "epp", "eireli", "sa", "s a", "cia", "mei",
 ]);
 
-function fornecedorTokens(value: unknown): Set<string> {
-  return new Set(normFornecedor(value).split(" ").filter((token) => token.length >= 2 && !STOP_WORDS.has(token)));
+const STOP_WORDS = new Set([
+  "de", "da", "do", "das", "dos", "e", "com",
+  "ltda", "me", "epp", "eireli", "sa", "cia", "mei",
+  "comercio", "comercial", "servico", "servicos", "industria", "industrial",
+  "empresa", "produtos", "produto", "fornecedores", "fornecedor",
+]);
+
+interface NormalizedSupplier {
+  full: string;
+  tokens: string[];
+  significant: string[];
+  removedNumericPrefix: boolean;
+  removedNumericSuffix: boolean;
 }
 
-function tokenOverlap(a: Set<string>, b: Set<string>): number {
+function looksLikeExternalNumericIdentifier(token: string): boolean {
+  const digits = token.replace(/\D/g, "");
+  if (digits.length < 6) return false;
+  return /^[\d.\-/]+$/.test(token);
+}
+
+function normalizeToken(token: string): string {
+  if (token === "servicos") return "servico";
+  if (token === "medicos") return "medico";
+  if (token === "medicas") return "medica";
+  if (token === "materiais") return "material";
+  return token;
+}
+
+function normalizeSupplier(value: unknown): NormalizedSupplier {
+  if (value == null) {
+    return { full: "", tokens: [], significant: [], removedNumericPrefix: false, removedNumericSuffix: false };
+  }
+
+  const text = removeAccents(String(value)).toLowerCase().replace(/[;,|]+/g, " ").replace(/\s+/g, " ").trim();
+  const rawTokens = text.split(" ").filter(Boolean);
+  let removedNumericPrefix = false;
+  let removedNumericSuffix = false;
+
+  while (rawTokens.length > 1 && looksLikeExternalNumericIdentifier(rawTokens[0])) {
+    rawTokens.shift();
+    removedNumericPrefix = true;
+  }
+  while (rawTokens.length > 1 && looksLikeExternalNumericIdentifier(rawTokens[rawTokens.length - 1])) {
+    rawTokens.pop();
+    removedNumericSuffix = true;
+  }
+
+  const tokens = rawTokens
+    .map((token) => token.replace(/[^a-z0-9]/g, ""))
+    .filter(Boolean)
+    .map(normalizeToken);
+
+  while (tokens.length > 1 && LEGAL_SUFFIXES.has(tokens[tokens.length - 1])) tokens.pop();
+
+  const full = tokens.join(" ");
+  const significant = tokens.filter((token) => token.length >= 2 && !STOP_WORDS.has(token));
+  return { full, tokens, significant, removedNumericPrefix, removedNumericSuffix };
+}
+
+function tokenPrefixCompatible(a: string, b: string): boolean {
+  if (a === b) return true;
+  const shorter = a.length <= b.length ? a : b;
+  const longer = a.length <= b.length ? b : a;
+  return shorter.length >= 3 && longer.startsWith(shorter);
+}
+
+function consecutivePrefixMatches(a: string[], b: string[]): number {
+  const max = Math.min(a.length, b.length);
   let count = 0;
-  for (const token of a) if (b.has(token)) count++;
+  for (let index = 0; index < max; index++) {
+    if (!tokenPrefixCompatible(a[index], b[index])) break;
+    count++;
+  }
   return count;
 }
 
+interface SupplierMatch {
+  score: number;
+  kind: "exact" | "normalized" | "truncated" | "numeric-code-removed" | "tokens" | "none";
+}
+
+function supplierMatch(a: unknown, b: unknown): SupplierMatch {
+  const na = normalizeSupplier(a);
+  const nb = normalizeSupplier(b);
+  if (!na.full || !nb.full) return { score: 0, kind: "none" };
+
+  const numericRemoved = na.removedNumericPrefix || na.removedNumericSuffix
+    || nb.removedNumericPrefix || nb.removedNumericSuffix;
+
+  if (na.full === nb.full) {
+    return { score: 100, kind: numericRemoved ? "numeric-code-removed" : "exact" };
+  }
+
+  const shorterFull = na.full.length <= nb.full.length ? na.full : nb.full;
+  const longerFull = na.full.length <= nb.full.length ? nb.full : na.full;
+  if (shorterFull.length >= 12 && longerFull.startsWith(shorterFull)) {
+    return { score: 92, kind: numericRemoved ? "numeric-code-removed" : "truncated" };
+  }
+
+  const prefixMatches = consecutivePrefixMatches(na.significant, nb.significant);
+  const minSignificant = Math.min(na.significant.length, nb.significant.length);
+  if (prefixMatches >= 3 || (prefixMatches >= 2 && prefixMatches === minSignificant)) {
+    return { score: 88, kind: numericRemoved ? "numeric-code-removed" : "truncated" };
+  }
+
+  const setA = new Set(na.significant);
+  const setB = new Set(nb.significant);
+  let overlap = 0;
+  for (const tokenA of setA) {
+    if ([...setB].some((tokenB) => tokenPrefixCompatible(tokenA, tokenB))) overlap++;
+  }
+
+  const required = Math.max(1, Math.min(2, minSignificant));
+  if (overlap >= required) {
+    const coverage = minSignificant > 0 ? overlap / minSignificant : 0;
+    return {
+      score: Math.round(60 + coverage * 20),
+      kind: numericRemoved ? "numeric-code-removed" : "tokens",
+    };
+  }
+
+  return { score: 0, kind: "none" };
+}
+
 function supplierScore(a: unknown, b: unknown): number {
-  const na = normFornecedor(a);
-  const nb = normFornecedor(b);
-  if (!na || !nb) return 0;
-  if (na === nb) return 100;
-  if (na.includes(nb) || nb.includes(na)) return 80;
-  const ta = fornecedorTokens(a);
-  const tb = fornecedorTokens(b);
-  const overlap = tokenOverlap(ta, tb);
-  const required = Math.max(1, Math.min(2, Math.min(ta.size, tb.size)));
-  return overlap >= required ? overlap * 10 : 0;
+  return supplierMatch(a, b).score;
 }
 
 function cleanFornecedor(name: string): string {
@@ -149,7 +245,7 @@ function stripConferir(value: string): string {
 }
 
 function isAutomaticPaymentInfo(value: string): boolean {
-  return /faltou\s+pagar|pagou\s+.*\s+a\s+(?:menos|mais)|pr[oó]ximas\s+parcelas|sem\s+pagamento\s+no\s+erp|t[ií]tulo\s+cadastrado|n[aã]o\s+(?:consta|aparece)\s+no\s+erp/i.test(value);
+  return /faltou\s+pagar|pagou\s+.*\s+a\s+(?:menos|mais)|pr[oó]ximas\s+parcelas|sem\s+pagamento\s+no\s+erp|t[ií]tulo\s+cadastrado|programado\s+para|erp\s+indica\s+pagamento|pagamento\s+localizado|sem\s+parcelas\s+posteriores|n[aã]o\s+(?:consta|aparece)\s+no\s+erp/i.test(value);
 }
 
 function wasMissingInErp(value: string): boolean {
@@ -167,11 +263,6 @@ function formatBRL(value: number): string {
 
 function formatDate(date: Date): string {
   return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
-}
-
-function formatMonthLabel(value: MesConferencia | undefined): string {
-  if (!value || value.mes < 1 || value.mes > 12) return "não informado";
-  return `${MONTH_NAMES[value.mes - 1]}/${value.ano}`;
 }
 
 export interface PrevEntry { fornecedor: string; tokens: Set<string>; info: string }
@@ -192,13 +283,19 @@ export function buildPreviousInfoMap(rows: SheetRow[]): Map<string, PrevEntry[]>
   const fornKey = findKey(rows[0], PREV_FORNECEDOR_KEYS);
   const notaKey = findKey(rows[0], PREV_NOTA_KEYS);
   const infoKey = findKey(rows[0], PREV_INFO_KEYS);
-  if (!fornKey || !notaKey || !infoKey) throw new Error("A planilha do mês anterior precisa conter as colunas FORNECEDOR, NOTA FISCAL e INFORMAÇÕES.");
+  if (!fornKey || !notaKey || !infoKey) {
+    throw new Error("A planilha do mês anterior precisa conter as colunas FORNECEDOR, NOTA FISCAL e INFORMAÇÕES.");
+  }
   for (const row of rows) {
     const nota = normNota(row[notaKey]);
     const fornecedor = row[fornKey];
     const info = formatInfoValue(row[infoKey]);
     if (!nota || !String(fornecedor ?? "").trim() || !info) continue;
-    const entry = { fornecedor: String(fornecedor), tokens: fornecedorTokens(fornecedor), info };
+    const entry = {
+      fornecedor: String(fornecedor),
+      tokens: new Set(normalizeSupplier(fornecedor).significant),
+      info,
+    };
     map.set(nota, [...(map.get(nota) ?? []), entry]);
   }
   return map;
@@ -207,14 +304,24 @@ export function buildPreviousInfoMap(rows: SheetRow[]): Map<string, PrevEntry[]>
 export function applyPreviousInfo(notas: NotaFiscal[], prevMap: Map<string, PrevEntry[]>): void {
   for (const nota of notas) {
     const candidates = prevMap.get(normNota(nota.notaFiscal)) ?? [];
-    const ranked = candidates.map((candidate) => ({ candidate, score: supplierScore(nota.fornecedor, candidate.fornecedor) }))
-      .filter((item) => item.score > 0).sort((a, b) => b.score - a.score);
-    if (ranked.length > 0 && (ranked.length === 1 || ranked[0].score > ranked[1].score)) nota.informacoes = ranked[0].candidate.info;
+    const ranked = candidates
+      .map((candidate) => ({ candidate, score: supplierScore(nota.fornecedor, candidate.fornecedor) }))
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score);
+    if (ranked.length > 0 && (ranked.length === 1 || ranked[0].score > ranked[1].score)) {
+      nota.informacoes = ranked[0].candidate.info;
+    }
   }
 }
 
-function dateKey(date: Date): string { return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`; }
-function uniqueDates(dates: Date[]): Date[] { return [...new Map(dates.map((date) => [dateKey(date), date])).values()]; }
+function dateKey(date: Date): string {
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+function uniqueDates(dates: Date[]): Date[] {
+  return [...new Map(dates.map((date) => [dateKey(date), date])).values()];
+}
+
 function formatDateList(dates: Date[]): string {
   const sorted = uniqueDates(dates).sort((a, b) => a.getTime() - b.getTime());
   if (sorted.length === 0) return "";
@@ -226,39 +333,48 @@ function formatDateList(dates: Date[]): string {
   if (pieces.length === 2) return `${pieces[0]} e ${pieces[1]}`;
   return `${pieces.slice(0, -1).join(", ")} e ${pieces[pieces.length - 1]}`;
 }
-function ymIndex(date: Date): number { return date.getFullYear() * 12 + date.getMonth(); }
-function isCalendarMonthLastDay(date: Date): boolean {
-  const lastDay = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
-  return date.getDate() === lastDay;
+
+function ymIndex(date: Date): number {
+  return date.getFullYear() * 12 + date.getMonth();
 }
 
-interface NormalizedPayment extends PagamentoRow { numeroNorm: string }
-type MatchKind = "exact" | "derived" | "shortened";
+function isCalendarMonthLastDay(date: Date): boolean {
+  return date.getDate() === new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+}
 
-function selectSupplierRows(nota: NotaFiscal, rows: NormalizedPayment[]): NormalizedPayment[] {
-  const scored = rows.map((row) => ({ row, score: supplierScore(nota.fornecedor, row.fornecedor) }))
-    .filter((item) => item.score > 0);
-  if (scored.length === 0) return [];
+interface NormalizedPayment extends PagamentoRow {
+  numeroNorm: string;
+}
 
-  const strong = scored.filter((item) => item.score >= 80);
-  if (strong.length > 0) return strong.map((item) => item.row);
+type MatchKind = "exact" | "exact-with-derived" | "derived" | "shortened";
+type SelectionFailure = "number-not-found" | "supplier-not-found" | "supplier-ambiguous" | "title-ambiguous";
 
-  const bestScore = Math.max(...scored.map((item) => item.score));
-  const best = scored.filter((item) => item.score === bestScore);
-  const supplierNames = new Set(best.map((item) => normFornecedor(item.row.fornecedor)));
-  return supplierNames.size === 1 ? best.map((item) => item.row) : [];
+interface PaymentSelection {
+  rows: NormalizedPayment[];
+  kind: MatchKind | null;
+  supplierKind: SupplierMatch["kind"];
+  failure: SelectionFailure | null;
 }
 
 function isSafeDerivedTitle(nf: string, title: string): boolean {
-  if (nf.length < 4 || !title.startsWith(nf)) return false;
+  if (nf.length < 1 || !title.startsWith(nf) || title === nf) return false;
   const suffix = title.slice(nf.length);
-  return suffix.length >= 2 && /^0+\d*$/.test(suffix);
+  return suffix.length >= 3 && /^0+\d*$/.test(suffix);
 }
 
 function isSafeShortenedTitle(nf: string, title: string): boolean {
   if (title.length < 5 || nf.length <= title.length || !nf.endsWith(title)) return false;
   const removedPrefix = nf.slice(0, nf.length - title.length);
   return /^\d+$/.test(removedPrefix) && removedPrefix.length >= 2;
+}
+
+function groupBySupplier(rows: NormalizedPayment[]): Map<string, NormalizedPayment[]> {
+  const groups = new Map<string, NormalizedPayment[]>();
+  for (const row of rows) {
+    const key = normalizeSupplier(row.fornecedor).full || row.fornecedor.toLowerCase();
+    groups.set(key, [...(groups.get(key) ?? []), row]);
+  }
+  return groups;
 }
 
 function groupDerivedBySuffixLength(nf: string, rows: NormalizedPayment[]): NormalizedPayment[][] {
@@ -271,26 +387,139 @@ function groupDerivedBySuffixLength(nf: string, rows: NormalizedPayment[]): Norm
   return [...groups.values()];
 }
 
-function selectPaymentsForInvoice(nota: NotaFiscal, rows: NormalizedPayment[]): { rows: NormalizedPayment[]; kind: MatchKind | null } {
+function chooseUniqueClosestGroup(groups: NormalizedPayment[][], nota: NotaFiscal): NormalizedPayment[] | null {
+  if (groups.length === 0) return [];
+  if (groups.length === 1) return groups[0];
+  const ranked = groups.map((group) => {
+    const total = roundCurrency(group.reduce((sum, row) => sum + row.valorTitulo, 0));
+    const distance = Math.min(Math.abs(total - nota.valorNF), Math.abs(total - nota.faltaPagar));
+    return { group, distance };
+  }).sort((a, b) => a.distance - b.distance);
+  return ranked[0].distance + MONEY_TOLERANCE < ranked[1].distance ? ranked[0].group : null;
+}
+
+function selectPaymentsForInvoice(nota: NotaFiscal, rows: NormalizedPayment[]): PaymentSelection {
   const nf = normNota(nota.notaFiscal);
-  if (!nf) return { rows: [], kind: null };
+  if (!nf || nf === "0") {
+    return { rows: [], kind: null, supplierKind: "none", failure: "number-not-found" };
+  }
 
-  const supplierRows = selectSupplierRows(nota, rows);
-  if (supplierRows.length === 0) return { rows: [], kind: null };
+  const numberCandidates = rows.filter((row) => (
+    row.numeroNorm === nf
+    || isSafeDerivedTitle(nf, row.numeroNorm)
+    || isSafeShortenedTitle(nf, row.numeroNorm)
+  ));
+  if (numberCandidates.length === 0) {
+    return { rows: [], kind: null, supplierKind: "none", failure: "number-not-found" };
+  }
 
+  const supplierGroups = [...groupBySupplier(numberCandidates).values()].map((group) => {
+    const match = supplierMatch(nota.fornecedor, group[0].fornecedor);
+    return { group, match };
+  }).filter((item) => item.match.score > 0).sort((a, b) => b.match.score - a.match.score);
+
+  if (supplierGroups.length === 0) {
+    return { rows: [], kind: null, supplierKind: "none", failure: "supplier-not-found" };
+  }
+  if (supplierGroups.length > 1 && supplierGroups[0].match.score === supplierGroups[1].match.score) {
+    return { rows: [], kind: null, supplierKind: "none", failure: "supplier-ambiguous" };
+  }
+
+  const supplierRows = supplierGroups[0].group;
+  const supplierKind = supplierGroups[0].match.kind;
   const exact = supplierRows.filter((row) => row.numeroNorm === nf);
-  if (exact.length > 0) return { rows: exact, kind: "exact" };
+  const derivedGroups = groupDerivedBySuffixLength(nf, supplierRows);
+  const chosenDerived = chooseUniqueClosestGroup(derivedGroups, nota);
 
-  const groups = groupDerivedBySuffixLength(nf, supplierRows);
-  if (groups.length === 1) return { rows: groups[0], kind: "derived" };
+  if (chosenDerived === null) {
+    return { rows: [], kind: null, supplierKind, failure: "title-ambiguous" };
+  }
+  if (exact.length > 0 && chosenDerived.length > 0) {
+    return { rows: [...exact, ...chosenDerived], kind: "exact-with-derived", supplierKind, failure: null };
+  }
+  if (exact.length > 0) {
+    return { rows: exact, kind: "exact", supplierKind, failure: null };
+  }
+  if (chosenDerived.length > 0) {
+    return { rows: chosenDerived, kind: "derived", supplierKind, failure: null };
+  }
 
   const shortened = supplierRows.filter((row) => isSafeShortenedTitle(nf, row.numeroNorm));
-  const shortenedByTitle = new Map<string, NormalizedPayment[]>();
-  for (const row of shortened) shortenedByTitle.set(row.numeroNorm, [...(shortenedByTitle.get(row.numeroNorm) ?? []), row]);
-  const shortenedGroups = [...shortenedByTitle.values()];
-  if (shortenedGroups.length === 1) return { rows: shortenedGroups[0], kind: "shortened" };
+  const shortenedGroups = [...new Map(shortened.map((row) => [
+    row.numeroNorm,
+    shortened.filter((item) => item.numeroNorm === row.numeroNorm),
+  ])).values()];
+  if (shortenedGroups.length === 1) {
+    return { rows: shortenedGroups[0], kind: "shortened", supplierKind, failure: null };
+  }
 
-  return { rows: [], kind: null };
+  return { rows: [], kind: null, supplierKind, failure: "title-ambiguous" };
+}
+
+function addSupplierMatchReason(nota: NotaFiscal, kind: SupplierMatch["kind"]): void {
+  if (kind === "numeric-code-removed") {
+    addReason(nota, "O fornecedor foi identificado após ignorar um código numérico, CPF, CNPJ ou matrícula junto ao nome.");
+  } else if (kind === "truncated") {
+    addReason(nota, "O fornecedor foi identificado por nome truncado no relatório do ERP.");
+  } else if (kind === "tokens") {
+    addReason(nota, "O fornecedor foi identificado por palavras relevantes em comum; conferir a associação.");
+  }
+}
+
+function addSelectionReason(nota: NotaFiscal, selection: PaymentSelection, rows: NormalizedPayment[]): void {
+  addSupplierMatchReason(nota, selection.supplierKind);
+  if (selection.kind === "exact-with-derived") {
+    addReason(nota, `A NF exata foi agrupada com títulos parcelados derivados: ${rows.map((row) => row.numeroNorm).join(", ")}.`);
+  } else if (selection.kind === "derived") {
+    addReason(nota, `Pagamento vinculado por títulos derivados da NF ${nota.notaFiscal}: ${rows.map((row) => row.numeroNorm).join(", ")}.`);
+  } else if (selection.kind === "shortened") {
+    addReason(nota, `Título do ERP identificado pelo final da NF ${nota.notaFiscal}: ${rows.map((row) => row.numeroNorm).join(", ")}.`);
+  }
+}
+
+function setSelectionFailureInfo(nota: NotaFiscal, failure: SelectionFailure | null, generatedDate: string): void {
+  if (failure === "supplier-not-found") {
+    nota.informacoes = "NF localizada no ERP, mas o fornecedor não corresponde com segurança";
+    addReason(nota, "O número da NF foi localizado no relatório, porém o fornecedor não pôde ser confirmado com segurança.");
+  } else if (failure === "supplier-ambiguous") {
+    nota.informacoes = "NF localizada para mais de um fornecedor possível";
+    addReason(nota, "Mais de um fornecedor apresentou a mesma pontuação de correspondência para esta NF.");
+  } else if (failure === "title-ambiguous") {
+    nota.informacoes = "Mais de um grupo de títulos possível no ERP";
+    addReason(nota, "Foram localizados múltiplos grupos compatíveis e não foi possível escolher um deles com segurança.");
+  } else {
+    nota.informacoes = `Não consta no ERP até ${generatedDate}`;
+    addReason(nota, `Nenhum título correspondente a esta NF e fornecedor foi localizado no relatório do ERP processado em ${generatedDate}.`);
+  }
+  markConferir(nota);
+}
+
+function uniquePayments(rows: NormalizedPayment[]): NormalizedPayment[] {
+  return [...new Map(rows.map((row) => [
+    `${row.numeroNorm}|${normalizeSupplier(row.fornecedor).full}|${row.valorTitulo}|${row.valorAberto}|${row.dataProgramada ? dateKey(row.dataProgramada) : ""}|${row.dataBaixa ? dateKey(row.dataBaixa) : ""}`,
+    row,
+  ])).values()];
+}
+
+function paymentTotal(rows: NormalizedPayment[], field: "valorTitulo" | "valorAberto"): number {
+  return roundCurrency(rows.reduce((sum, row) => sum + row[field], 0));
+}
+
+function paidTotal(rows: NormalizedPayment[]): number {
+  return roundCurrency(rows.reduce((sum, row) => sum + Math.max(0, row.valorTitulo - row.valorAberto), 0));
+}
+
+function setPaymentDifferenceInfo(nota: NotaFiscal, paid: number): boolean {
+  const difference = roundCurrency(paid - nota.valorNF);
+  if (Math.abs(difference) < 0.01) return false;
+  if (difference < 0) {
+    nota.informacoes = `Pagou ${formatBRL(Math.abs(difference))} a menos`;
+    addReason(nota, `O valor da NF é ${formatBRL(nota.valorNF)}, mas o pagamento localizado no ERP foi de ${formatBRL(paid)}. Foram pagos ${formatBRL(Math.abs(difference))} a menos.`);
+  } else {
+    nota.informacoes = `Pagou ${formatBRL(difference)} a mais`;
+    addReason(nota, `O valor da NF é ${formatBRL(nota.valorNF)}, mas o pagamento localizado no ERP foi de ${formatBRL(paid)}. Foram pagos ${formatBRL(difference)} a mais.`);
+  }
+  return true;
 }
 
 export function applyPagamentosPdf(
@@ -299,78 +528,98 @@ export function applyPagamentosPdf(
   opts: { mesConferencia: MesConferencia; generatedAt?: Date },
 ): void {
   const generatedAt = opts.generatedAt ?? new Date();
-  lastWorkbookContext = {
-    mesConferencia: opts.mesConferencia,
-    generatedAt,
-    recordedAt: Date.now(),
-  };
-
+  lastWorkbookContext = { mesConferencia: opts.mesConferencia, generatedAt, recordedAt: Date.now() };
   if (pdfRows.length === 0) return;
+
   const mesIdx = opts.mesConferencia.ano * 12 + opts.mesConferencia.mes - 1;
   const generatedDate = formatDate(generatedAt);
   const normalized: NormalizedPayment[] = pdfRows.map((row) => ({ ...row, numeroNorm: normNota(row.numero) }));
 
   for (const nota of notas) {
     const previousInfo = nota.informacoes;
+    nota.motivosConferencia = [];
     const selection = selectPaymentsForInvoice(nota, normalized);
 
     if (selection.rows.length === 0) {
-      nota.informacoes = `Não consta no ERP até ${generatedDate}`;
-      addReason(nota, `Nenhum título correspondente a esta NF e fornecedor foi localizado no relatório do ERP processado em ${generatedDate}.`);
-      markConferir(nota);
+      setSelectionFailureInfo(nota, selection.failure, generatedDate);
       continue;
     }
 
-    const uniqueRows = [...new Map(selection.rows.map((row) => [
-      `${row.numeroNorm}|${normFornecedor(row.fornecedor)}|${row.valorTitulo}|${row.valorAberto}|${row.dataProgramada ? dateKey(row.dataProgramada) : ""}|${row.dataBaixa ? dateKey(row.dataBaixa) : ""}`,
-      row,
-    ])).values()];
-
-    if (uniqueRows.length < selection.rows.length) addReason(nota, "O PDF continha lançamentos duplicados; as duplicidades foram ignoradas.");
-    if (selection.kind === "derived") {
-      addReason(nota, `Pagamento vinculado por títulos derivados da NF ${nota.notaFiscal}: ${uniqueRows.map((row) => row.numeroNorm).join(", ")}.`);
+    const rows = uniquePayments(selection.rows);
+    if (rows.length < selection.rows.length) {
+      addReason(nota, "O PDF continha lançamentos duplicados; as duplicidades foram ignoradas.");
     }
-    if (selection.kind === "shortened") {
-      addReason(nota, `Título do ERP identificado pelo final da NF ${nota.notaFiscal}: ${uniqueRows.map((row) => row.numeroNorm).join(", ")}.`);
-    }
+    addSelectionReason(nota, selection, rows);
     if (wasMissingInErp(previousInfo)) {
       addReason(nota, "A planilha do mês anterior informava que a NF não constava no ERP. No relatório atual foram encontrados títulos correspondentes, e a informação foi atualizada automaticamente.");
     }
 
-    const relevantRows = uniqueRows.filter((row) => {
-      const scheduled = row.dataProgramada;
-      if (!scheduled) return false;
-      const scheduledMonth = ymIndex(scheduled);
-      return scheduledMonth > mesIdx || (scheduledMonth === mesIdx && isCalendarMonthLastDay(scheduled));
+    const relevantRows = rows.filter((row) => {
+      if (!row.dataProgramada) return false;
+      const scheduledMonth = ymIndex(row.dataProgramada);
+      return scheduledMonth > mesIdx || (scheduledMonth === mesIdx && isCalendarMonthLastDay(row.dataProgramada));
     });
-
-    const lastDayRows = relevantRows.filter((row) => {
-      const scheduled = row.dataProgramada;
-      return scheduled !== null && ymIndex(scheduled) === mesIdx && isCalendarMonthLastDay(scheduled);
-    });
-    const undatedRows = uniqueRows.filter((row) => row.dataProgramada === null);
+    const lastDayRows = relevantRows.filter((row) => (
+      row.dataProgramada !== null
+      && ymIndex(row.dataProgramada) === mesIdx
+      && isCalendarMonthLastDay(row.dataProgramada)
+    ));
+    const openRows = rows.filter((row) => row.valorAberto > MONEY_TOLERANCE);
+    const openScheduledRows = openRows.filter((row) => row.dataProgramada !== null && row.dataBaixa === null);
+    const openUndatedRows = openRows.filter((row) => row.dataProgramada === null);
+    const totalAberto = paymentTotal(rows, "valorAberto");
+    const totalPago = paidTotal(rows);
 
     if (relevantRows.length > 0) {
-      nota.informacoes = formatDateList(relevantRows.map((row) => row.dataProgramada as Date));
+      const dates = formatDateList(relevantRows.map((row) => row.dataProgramada as Date));
+      const singleOpenScheduled = rows.length === 1 && openScheduledRows.length === 1 && relevantRows.length === 1;
+      nota.informacoes = singleOpenScheduled ? `Programado para ${dates}, mas ainda sem data de baixa` : dates;
 
-      const relevantTotal = roundCurrency(relevantRows.reduce((sum, row) => sum + row.valorTitulo, 0));
+      const relevantTotal = paymentTotal(relevantRows, "valorTitulo");
       const difference = roundCurrency(relevantTotal - nota.faltaPagar);
       if (Math.abs(difference) >= 0.01) {
-        addReason(
-          nota,
-          `A soma das parcelas consideradas após o mês conferido é ${formatBRL(relevantTotal)}, mas o FALTA PAGAR é ${formatBRL(nota.faltaPagar)}. Diferença de ${formatBRL(Math.abs(difference))}.`,
-        );
+        addReason(nota, `A soma das parcelas consideradas após o mês conferido é ${formatBRL(relevantTotal)}, mas o FALTA PAGAR é ${formatBRL(nota.faltaPagar)}. Diferença de ${formatBRL(Math.abs(difference))}.`);
+      }
+      if (lastDayRows.length > 0) {
+        const lastDates = formatDateList(lastDayRows.map((row) => row.dataProgramada as Date));
+        addReason(nota, `A parcela de ${lastDates} foi programada para o último dia do mês conferido e pode ter sido compensada no primeiro dia útil do mês seguinte.`);
+      }
+      if (openScheduledRows.some((row) => relevantRows.includes(row))) {
+        addReason(nota, "Há parcela programada no ERP que ainda não possui data de baixa.");
+      }
+    } else if (openRows.length > 0) {
+      if (openScheduledRows.length > 0) {
+        const dates = formatDateList(openScheduledRows.map((row) => row.dataProgramada as Date));
+        nota.informacoes = `Programado para ${dates}, mas ainda sem data de baixa`;
+        addReason(nota, "O título possui data programada no ERP, permanece em aberto e ainda não possui data de baixa.");
+      } else if (openUndatedRows.length > 0) {
+        nota.informacoes = "Título cadastrado, mas ainda sem data programada para pagamento";
+        addReason(nota, "O título foi localizado no ERP, permanece em aberto e ainda não possui data programada ou data de baixa.");
+      } else {
+        nota.informacoes = "Título permanece em aberto no ERP";
+        addReason(nota, "O título foi localizado no ERP com saldo em aberto, mas sem uma situação de pagamento conclusiva.");
       }
 
-      if (lastDayRows.length > 0) {
-        const dates = formatDateList(lastDayRows.map((row) => row.dataProgramada as Date));
-        addReason(nota, `A parcela de ${dates} foi programada para o último dia do mês conferido e pode ter sido compensada no primeiro dia útil do mês seguinte.`);
+      const openDifference = roundCurrency(totalAberto - nota.faltaPagar);
+      if (Math.abs(openDifference) >= 0.01) {
+        addReason(nota, `O ERP informa ${formatBRL(totalAberto)} em aberto, mas a planilha informa FALTA PAGAR de ${formatBRL(nota.faltaPagar)}. Diferença de ${formatBRL(Math.abs(openDifference))}.`);
       }
-    } else if (undatedRows.length > 0) {
-      nota.informacoes = "Título cadastrado, mas ainda sem data programada para pagamento";
-      addReason(nota, "O título foi localizado no ERP para este fornecedor e esta NF, mas ainda não possui data programada para pagamento.");
-    } else {
-      nota.informacoes = isAutomaticPaymentInfo(previousInfo) ? "" : stripConferir(previousInfo);
+    } else if (!setPaymentDifferenceInfo(nota, totalPago)) {
+      if (nota.faltaPagar > MONEY_TOLERANCE) {
+        nota.informacoes = `ERP indica pagamento integral, mas a planilha ainda possui ${formatBRL(nota.faltaPagar)} em aberto`;
+        addReason(nota, `O título foi localizado no ERP com valor em aberto de ${formatBRL(totalAberto)} e pagamento de ${formatBRL(totalPago)}. Porém, a planilha informa FALTA PAGAR de ${formatBRL(nota.faltaPagar)}. Conferir se o pagamento ainda não foi lançado ou abatido na conta.`);
+      } else {
+        const paidDates = rows.map((row) => row.dataBaixa).filter((date): date is Date => date !== null);
+        nota.informacoes = paidDates.length > 0 ? `Pagamento localizado no ERP em ${formatDateList(paidDates)}` : "Pagamento integral localizado no ERP";
+      }
+    }
+
+    if (!nota.informacoes) {
+      const previousManualInfo = previousInfo && !isAutomaticPaymentInfo(previousInfo) ? stripConferir(previousInfo) : "";
+      nota.informacoes = previousManualInfo || "Sem parcelas posteriores ao mês conferido";
+      if (!previousManualInfo) {
+        addReason(nota, "A NF foi localizada no ERP, mas não foram encontradas parcelas posteriores ao mês conferido.");
+      }
     }
 
     if (nota.motivosConferencia.length > 0) markConferir(nota);
@@ -439,266 +688,14 @@ export function transformRows(rows: SheetRow[]): TransformResult {
     target.faltaPagar += value;
     appliedRows.add(index);
   });
+
   return { notas };
 }
 
-function toJsDate(value: unknown): Date | null {
-  if (value instanceof Date) return value;
-  if (typeof value === "number") return new Date(Math.round((value - 25569) * 86400 * 1000));
-  if (typeof value === "string" && value.trim()) {
-    const br = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
-    if (br) return new Date(br[3].length === 2 ? 2000 + Number(br[3]) : Number(br[3]), Number(br[2]) - 1, Number(br[1]));
-    const parsed = new Date(value);
-    if (!Number.isNaN(parsed.getTime())) return parsed;
-  }
-  return null;
-}
-
-function sanitizeSheetName(name: string): string {
-  return name.replace(/[\[\]:*?/\\]/g, "_").slice(0, 31) || "Sheet";
-}
-
-function escapeSheetNameForLink(name: string): string {
-  return name.replace(/'/g, "''");
-}
-
-function accountSort(a: SheetInput, b: SheetInput): number {
-  const aTrimmed = String(a.conta).trim();
-  const bTrimmed = String(b.conta).trim();
-  const aNumeric = /^\d+$/.test(aTrimmed);
-  const bNumeric = /^\d+$/.test(bTrimmed);
-  if (aNumeric && bNumeric) return Number(aTrimmed) - Number(bTrimmed);
-  if (aNumeric) return -1;
-  if (bNumeric) return 1;
-  return aTrimmed.localeCompare(bTrimmed, "pt-BR", { numeric: true });
-}
-
-function accountBalance(result: TransformResult): number {
-  return roundCurrency(result.notas.reduce((sum, nota) => sum + nota.faltaPagar, 0));
-}
-
-function thinBorder(): Partial<ExcelJS.Borders> {
-  return {
-    top: { style: "thin", color: { argb: "FFD1D5DB" } },
-    left: { style: "thin", color: { argb: "FFD1D5DB" } },
-    bottom: { style: "thin", color: { argb: "FFD1D5DB" } },
-    right: { style: "thin", color: { argb: "FFD1D5DB" } },
-  };
-}
-
-function populateSheet(ws: ExcelJS.Worksheet, result: TransformResult, accountName: string): number {
-  ws.columns = [
-    { key: "data", width: 14 }, { key: "fornecedor", width: 45 },
-    { key: "nota", width: 15 }, { key: "valor", width: 18 },
-    { key: "falta", width: 18 }, { key: "info", width: 60 },
-    { key: "motivo", width: 65 },
-  ];
-
-  ws.mergeCells("A1:G1");
-  const backCell = ws.getCell("A1");
-  backCell.value = { text: `← Voltar para Geral  |  Conta ${accountName}`, hyperlink: "#'Geral'!A1" };
-  backCell.font = { bold: true, color: { argb: "FF1D4ED8" }, underline: true };
-  backCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEFF6FF" } };
-  backCell.alignment = { vertical: "middle", horizontal: "left" };
-  ws.getRow(1).height = 24;
-
-  const header = ws.getRow(2);
-  header.values = ["DATA", "FORNECEDOR", "NOTA FISCAL", "VALOR DA NF", "FALTA PAGAR", "INFORMAÇÕES", "MOTIVO DA CONFERÊNCIA"];
-  header.height = 24;
-  header.eachCell((cell) => {
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF374151" } };
-    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
-    cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
-    cell.border = thinBorder();
-  });
-
-  for (const nota of result.notas) {
-    ws.addRow({
-      data: toJsDate(nota.data) ?? nota.data ?? "",
-      fornecedor: nota.fornecedor,
-      nota: nota.notaFiscal,
-      valor: nota.valorNF,
-      falta: nota.faltaPagar,
-      info: nota.informacoes,
-      motivo: nota.motivosConferencia.join("\n"),
-    });
-  }
-
-  const total = accountBalance(result);
-  const totalRowNum = ws.rowCount + 1;
-  const totalRow = ws.getRow(totalRowNum);
-  totalRow.getCell(3).value = "TOTAL";
-  totalRow.getCell(5).value = { formula: `SUM(E3:E${totalRowNum - 1})`, result: total };
-
-  for (let rowNumber = 3; rowNumber <= totalRowNum; rowNumber++) {
-    const row = ws.getRow(rowNumber);
-    const isTotal = rowNumber === totalRowNum;
-    row.height = isTotal ? 24 : 32;
-    row.eachCell({ includeEmpty: true }, (cell, col) => {
-      cell.alignment = {
-        vertical: "middle",
-        horizontal: col === 2 || col === 6 || col === 7 ? "left" : "center",
-        wrapText: col === 2 || col === 6 || col === 7,
-      };
-      cell.fill = {
-        type: "pattern",
-        pattern: "solid",
-        fgColor: { argb: isTotal ? "FFE5E7EB" : col === 7 && cell.value ? "FFFFF4CC" : "FFF8FAFC" },
-      };
-      if (isTotal) cell.font = { bold: true };
-      if (col === 1) cell.numFmt = "dd/mm/yyyy";
-      if (col === 4 || col === 5) cell.numFmt = '"R$" #,##0.00;[Red]-"R$" #,##0.00';
-      cell.border = thinBorder();
-    });
-  }
-
-  if (totalRowNum > 3) ws.autoFilter = { from: "A2", to: `G${totalRowNum - 1}` };
-  ws.views = [{ state: "frozen", ySplit: 2 }];
-  ws.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
-  return total;
-}
-
-interface GeneralEntry {
-  conta: string;
-  sheetName: string;
-  saldo: number;
-}
-
-function populateGeneralSheet(
-  ws: ExcelJS.Worksheet,
-  entries: GeneralEntry[],
-  opts: BuildXlsxOptions,
-): void {
-  ws.columns = [
-    { key: "conta", width: 24 },
-    { key: "saldo", width: 24 },
-  ];
-  ws.properties.defaultRowHeight = 22;
-  ws.views = [{ state: "frozen", ySplit: 5 }];
-  ws.pageSetup = { orientation: "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
-
-  ws.mergeCells("A1:B1");
-  const title = ws.getCell("A1");
-  title.value = "Resumo Geral das Contas";
-  title.font = { bold: true, size: 18, color: { argb: "FFFFFFFF" } };
-  title.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F2937" } };
-  title.alignment = { vertical: "middle", horizontal: "center" };
-  ws.getRow(1).height = 34;
-
-  ws.mergeCells("A2:B2");
-  const monthCell = ws.getCell("A2");
-  monthCell.value = `Mês de conferência: ${formatMonthLabel(opts.mesConferencia)}`;
-  monthCell.font = { bold: true, color: { argb: "FF374151" } };
-  monthCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEFF6FF" } };
-  monthCell.alignment = { horizontal: "center", vertical: "middle" };
-
-  ws.mergeCells("A3:B3");
-  const dateCell = ws.getCell("A3");
-  dateCell.value = `Planilha gerada em: ${formatDate(opts.generatedAt ?? new Date())}`;
-  dateCell.font = { italic: true, color: { argb: "FF6B7280" } };
-  dateCell.alignment = { horizontal: "center", vertical: "middle" };
-
-  const headerRow = ws.getRow(5);
-  headerRow.values = ["CONTA", "SALDO FINAL"];
-  headerRow.height = 26;
-  headerRow.eachCell((cell) => {
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF374151" } };
-    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
-    cell.alignment = { vertical: "middle", horizontal: "center" };
-    cell.border = thinBorder();
-  });
-
-  entries.forEach((entry, index) => {
-    const rowNumber = 6 + index;
-    const row = ws.getRow(rowNumber);
-    const accountCell = row.getCell(1);
-    accountCell.value = {
-      text: entry.conta,
-      hyperlink: `#'${escapeSheetNameForLink(entry.sheetName)}'!A1`,
-    };
-    accountCell.font = { bold: true, color: { argb: "FF1D4ED8" }, underline: true };
-    accountCell.alignment = { vertical: "middle", horizontal: "center" };
-
-    const balanceCell = row.getCell(2);
-    balanceCell.value = entry.saldo;
-    balanceCell.numFmt = '"R$" #,##0.00;[Red]-"R$" #,##0.00';
-    balanceCell.font = { bold: true, color: { argb: entry.saldo < 0 ? "FFB91C1C" : "FF111827" } };
-    balanceCell.alignment = { vertical: "middle", horizontal: "right" };
-
-    const fillColor = index % 2 === 0 ? "FFF8FAFC" : "FFFFFFFF";
-    row.eachCell({ includeEmpty: true }, (cell) => {
-      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fillColor } };
-      cell.border = thinBorder();
-    });
-    row.height = 25;
-  });
-
-  const firstDataRow = 6;
-  const lastDataRow = entries.length > 0 ? firstDataRow + entries.length - 1 : firstDataRow;
-  const totalRowNumber = entries.length > 0 ? lastDataRow + 1 : firstDataRow;
-  const totalRow = ws.getRow(totalRowNumber);
-  totalRow.getCell(1).value = "TOTAL GERAL";
-  const totalResult = roundCurrency(entries.reduce((sum, entry) => sum + entry.saldo, 0));
-  totalRow.getCell(2).value = entries.length > 0
-    ? { formula: `SUM(B${firstDataRow}:B${lastDataRow})`, result: totalResult }
-    : 0;
-  totalRow.getCell(2).numFmt = '"R$" #,##0.00;[Red]-"R$" #,##0.00';
-  totalRow.height = 27;
-  totalRow.eachCell({ includeEmpty: true }, (cell) => {
-    cell.font = { bold: true, color: { argb: "FF111827" } };
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFDDEAFE" } };
-    cell.alignment = { vertical: "middle", horizontal: cell.col === 2 ? "right" : "center" };
-    cell.border = thinBorder();
-  });
-
-  if (entries.length > 0) ws.autoFilter = { from: "A5", to: `B${lastDataRow}` };
-}
-
-export async function buildXlsx(
-  input: TransformResult | SheetInput[],
-  options: BuildXlsxOptions = {},
-): Promise<Blob> {
-  const workbook = new ExcelJS.Workbook();
-  workbook.creator = "Conversor de Planilhas";
-  workbook.created = options.generatedAt ?? new Date();
-
-  const sheets = (Array.isArray(input) ? input : [{ conta: "Notas Fiscais", result: input }])
-    .slice()
-    .sort(accountSort);
-
-  const freshContext = lastWorkbookContext && Date.now() - lastWorkbookContext.recordedAt < 60_000
-    ? lastWorkbookContext
-    : null;
-  const resolvedOptions: BuildXlsxOptions = {
+export async function buildXlsx(input: TransformResult | SheetInput[], options: BuildXlsxOptions = {}): Promise<Blob> {
+  const freshContext = lastWorkbookContext && Date.now() - lastWorkbookContext.recordedAt < 60_000 ? lastWorkbookContext : null;
+  return buildXlsxFile(input, {
     mesConferencia: options.mesConferencia ?? freshContext?.mesConferencia,
     generatedAt: options.generatedAt ?? freshContext?.generatedAt ?? new Date(),
-  };
-
-  const usedNames = new Set<string>(["geral"]);
-  const mappedSheets = sheets.map((sheet) => {
-    let name = sanitizeSheetName(sheet.conta);
-    let suffix = 2;
-    while (usedNames.has(name.toLowerCase())) {
-      name = sanitizeSheetName(`${sheet.conta}_${suffix++}`);
-    }
-    usedNames.add(name.toLowerCase());
-    return { ...sheet, sheetName: name };
   });
-
-  const entries: GeneralEntry[] = mappedSheets.map((sheet) => ({
-    conta: sheet.conta,
-    sheetName: sheet.sheetName,
-    saldo: accountBalance(sheet.result),
-  }));
-
-  const generalSheet = workbook.addWorksheet("Geral");
-  populateGeneralSheet(generalSheet, entries, resolvedOptions);
-
-  for (const sheet of mappedSheets) {
-    const worksheet = workbook.addWorksheet(sheet.sheetName);
-    populateSheet(worksheet, sheet.result, sheet.conta);
-  }
-
-  const buffer = await workbook.xlsx.writeBuffer();
-  return new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
 }
