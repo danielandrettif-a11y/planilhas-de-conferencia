@@ -74,13 +74,10 @@ export function parsePagamentoLine(text: string): PagamentoRow | null {
   if (!match) return null;
 
   const tokens = match[1].trim().split(/\s+/);
-  let dataProgramada: Date | null = null;
+  const trailingDateTokens: string[] = [];
 
-  // Os relatórios do ERP trazem várias datas antes dos valores. A data mais à
-  // direita é a data programada usada para reconstruir as parcelas do período.
   while (tokens.length > 0 && isDateLikeToken(tokens[tokens.length - 1])) {
-    const dateToken = tokens.pop() ?? "";
-    if (!dataProgramada) dataProgramada = parseBrDate(dateToken);
+    trailingDateTokens.push(tokens.pop() ?? "");
   }
 
   if (tokens.length < 2) return null;
@@ -97,12 +94,19 @@ export function parsePagamentoLine(text: string): PagamentoRow | null {
 
   const dataBaixa = match[4] ? parseBrDate(match[4]) : null;
 
+  // Linhas com apenas emissão e vencimento não possuem programação de pagamento.
+  // Quando o relatório traz ao menos três datas antes dos valores, a data mais à
+  // direita representa a programação usada na conferência das parcelas.
+  const dataProgramada = trailingDateTokens.length >= 3
+    ? parseBrDate(trailingDateTokens[0])
+    : dataBaixa;
+
   return {
     numero,
     fornecedor,
     valorTitulo: parseBrNumber(match[2]),
     valorAberto: parseBrNumber(match[3]),
-    dataProgramada: dataProgramada ?? dataBaixa,
+    dataProgramada,
     dataBaixa,
   };
 }
