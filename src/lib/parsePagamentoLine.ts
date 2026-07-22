@@ -36,8 +36,23 @@ function parseBrNumber(value: string): number {
 const LINE_RE =
   /^(.*?)\s+(\d{1,3}(?:\.\d{3})*,\d{2})\s+(\d{1,3}(?:\.\d{3})*,\d{2})(?:\s+(\d{2}\/\d{2}\/\d{4}))?\s*$/;
 
+const TITLE_COMPLEMENTS = new Set([
+  "FRETE",
+  "BOLETO",
+  "DUPLICATA",
+  "PARCELA",
+]);
+
 function isDateLikeToken(value: string): boolean {
   return /^\d{2}\/\d{2}\/\d{4}$/.test(value);
+}
+
+function cleanSupplierTokens(tokens: string[]): string[] {
+  const cleaned = [...tokens];
+  while (cleaned.length > 1 && TITLE_COMPLEMENTS.has(cleaned[0].toUpperCase().replace(/[^A-Z]/g, ""))) {
+    cleaned.shift();
+  }
+  return cleaned;
 }
 
 export function parsePagamentoLine(text: string): PagamentoRow | null {
@@ -53,20 +68,25 @@ export function parsePagamentoLine(text: string): PagamentoRow | null {
 
   if (tokens.length < 2) return null;
 
-  if (/^\d{1,6}$/.test(tokens[0])) tokens.shift();
+  // O relatório pode trazer um contador de linha com até três dígitos antes do título.
+  // NFs curtas aparecem como 0001, 00020, 00034 etc. e não podem ser descartadas.
+  if (/^\d{1,3}$/.test(tokens[0]) && tokens.length >= 3 && /\d/.test(tokens[1])) {
+    tokens.shift();
+  }
   if (tokens.length < 2) return null;
 
   let numero = tokens.shift() ?? "";
   if (!/\d/.test(numero)) return null;
-  numero = numero.replace(/^0+/, "") || "0";
+  numero = numero.replace(/\D+/g, "").replace(/^0+/, "") || "0";
 
-  const fornecedor = tokens.join(" ").trim();
+  const fornecedorTokens = cleanSupplierTokens(tokens);
+  const fornecedor = fornecedorTokens.join(" ").trim();
   if (!fornecedor || /filtro/i.test(fornecedor)) return null;
 
   const dataBaixa = match[4] ? parseBrDate(match[4]) : null;
 
-  // No relatório do ERP, quando há ao menos três datas antes dos valores,
-  // a data mais à direita é a programação usada para a conferência.
+  // Com três ou mais datas antes dos valores, a data mais à direita representa
+  // a programação. Com apenas emissão/vencimento, não presumimos programação.
   const dataProgramada = trailingDateTokens.length >= 3
     ? parseBrDate(trailingDateTokens[0])
     : dataBaixa;
