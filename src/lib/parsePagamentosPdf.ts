@@ -50,9 +50,11 @@ function joinColumn(line: TextItem[], minX: number, maxX = Number.POSITIVE_INFIN
     .trim();
 }
 
-function parsePositionedLine(line: TextItem[]): PagamentoRow | null {
-  const maxX = Math.max(...line.map((item) => item.x + item.w), 1);
-  const scale = maxX / 750;
+function parsePositionedLine(line: TextItem[], pageWidth: number): PagamentoRow | null {
+  // O relatório usado nos testes reais tem largura-base de 792 pontos.
+  // Escalamos pelos limites da página, não pelo último item da linha, porque
+  // títulos em aberto não possuem Data baixa e terminam antes da borda direita.
+  const scale = pageWidth / 792;
   const x = (value: number) => value * scale;
 
   const numero = joinColumn(line, x(70), x(167));
@@ -102,6 +104,7 @@ export async function parsePagamentosPdfDetailed(file: File): Promise<Pagamentos
 
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
     const page = await pdf.getPage(pageNumber);
+    const viewport = page.getViewport({ scale: 1 });
     const content = await page.getTextContent();
     const items: TextItem[] = [];
 
@@ -111,7 +114,7 @@ export async function parsePagamentosPdfDetailed(file: File): Promise<Pagamentos
     }
 
     for (const line of groupByLine(items)) {
-      const row = parsePositionedLine(line) ?? parsePagamentoLine(joinLine(line));
+      const row = parsePositionedLine(line, viewport.width) ?? parsePagamentoLine(joinLine(line));
       if (row) rows.push(row);
     }
   }
