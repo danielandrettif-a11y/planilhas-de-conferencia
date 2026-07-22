@@ -138,13 +138,12 @@ function stripConferir(value: string): string {
   return value.replace(/\s*\(conferir\)\s*$/i, "").trim();
 }
 
-function appendInfo(current: string, message: string): string {
-  const clean = stripConferir(current);
-  return clean ? `${clean} - ${message}` : message;
+function isAutomaticPaymentInfo(value: string): boolean {
+  return /faltou\s+pagar|pagou\s+.*\s+a\s+(?:menos|mais)|pr[oó]ximas\s+parcelas|sem\s+pagamento\s+no\s+erp|t[ií]tulo\s+cadastrado|n[aã]o\s+(?:consta|aparece)\s+no\s+erp/i.test(value);
 }
 
-function isAutomaticPaymentInfo(value: string): boolean {
-  return /faltou\s+pagar|pagou\s+.*\s+a\s+(?:menos|mais)|pr[oó]ximas\s+parcelas|sem\s+pagamento\s+no\s+erp|t[ií]tulo\s+cadastrado/i.test(value);
+function wasMissingInErp(value: string): boolean {
+  return /n[aã]o\s+(?:consta|aparece)\s+no\s+erp/i.test(value);
 }
 
 function roundCurrency(value: number): number {
@@ -156,14 +155,18 @@ function formatBRL(value: number): string {
     .format(roundCurrency(value)).replace(/\u00a0/g, " ");
 }
 
+function formatDate(date: Date): string {
+  return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
+}
+
 export interface PrevEntry { fornecedor: string; tokens: Set<string>; info: string }
 
 function formatInfoValue(value: unknown): string {
   if (value == null) return "";
-  if (value instanceof Date) return `${String(value.getDate()).padStart(2, "0")}/${String(value.getMonth() + 1).padStart(2, "0")}/${value.getFullYear()}`;
+  if (value instanceof Date) return formatDate(value);
   if (typeof value === "number" && value > 20000 && value < 80000 && Number.isInteger(value)) {
     const date = new Date(Math.round((value - 25569) * 86400 * 1000));
-    return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
+    return formatDate(date);
   }
   return String(value).trim();
 }
@@ -253,13 +256,6 @@ function groupDerivedBySuffixLength(nf: string, rows: NormalizedPayment[]): Norm
   return [...groups.values()];
 }
 
-function groupMatchesExpectedValue(nota: NotaFiscal, rows: NormalizedPayment[]): boolean {
-  const total = roundCurrency(rows.reduce((sum, row) => sum + row.valorTitulo, 0));
-  const expectedOpen = roundCurrency(nota.faltaPagar);
-  const alreadyDeducted = roundCurrency(total + nota.faltaPagar);
-  return Math.abs(total - expectedOpen) <= 0.02 || Math.abs(alreadyDeducted - nota.valorNF) <= 0.02;
-}
-
 function selectPaymentsForInvoice(nota: NotaFiscal, rows: NormalizedPayment[]): { rows: NormalizedPayment[]; kind: MatchKind | null } {
   const nf = normNota(nota.notaFiscal);
   if (!nf) return { rows: [], kind: null };
@@ -271,33 +267,41 @@ function selectPaymentsForInvoice(nota: NotaFiscal, rows: NormalizedPayment[]): 
   if (exact.length > 0) return { rows: exact, kind: "exact" };
 
   const groups = groupDerivedBySuffixLength(nf, supplierRows);
-  const validGroups = groups.filter((group) => groupMatchesExpectedValue(nota, group));
-  if (validGroups.length === 1) return { rows: validGroups[0], kind: "derived" };
+  if (groups.length === 1) return { rows: groups[0], kind: "derived" };
 
   const shortened = supplierRows.filter((row) => isSafeShortenedTitle(nf, row.numeroNorm));
   const shortenedByTitle = new Map<string, NormalizedPayment[]>();
   for (const row of shortened) shortenedByTitle.set(row.numeroNorm, [...(shortenedByTitle.get(row.numeroNorm) ?? []), row]);
-  const validShortened = [...shortenedByTitle.values()].filter((group) => groupMatchesExpectedValue(nota, group));
-  if (validShortened.length === 1) return { rows: validShortened[0], kind: "shortened" };
+  const shortenedGroups = [...shortenedByTitle.values()];
+  if (shortenedGroups.length === 1) return { rows: shortenedGroups[0], kind: "shortened" };
 
   return { rows: [], kind: null };
 }
 
-export function applyPagamentosPdf(notas: NotaFiscal[], pdfRows: PagamentoRow[], opts: { mesConferencia: MesConferencia }): void {
+export function applyPagamentosPdf(
+  notas: NotaFiscal[],
+  pdfRows: PagamentoRow[],
+  opts: { mesConferencia: MesConferencia; generatedAt?: Date },
+): void {
   if (pdfRows.length === 0) return;
   const mesIdx = opts.mesConferencia.ano * 12 + opts.mesConferencia.mes - 1;
+  const generatedAt = opts.generatedAt ?? new Date();
+  const generatedDate = formatDate(generatedAt);
   const normalized: NormalizedPayment[] = pdfRows.map((row) => ({ ...row, numeroNorm: normNota(row.numero) }));
 
   for (const nota of notas) {
-    const inheritedInfo = isAutomaticPaymentInfo(nota.informacoes) ? "" : nota.informacoes;
+    const previousInfo = nota.informacoes;
     const selection = selectPaymentsForInvoice(nota, normalized);
+
     if (selection.rows.length === 0) {
-      if (isAutomaticPaymentInfo(nota.informacoes)) nota.informacoes = "";
+      nota.informacoes = `Não consta no ERP até ${generatedDate}`;
+      addReason(nota, `Nenhum título correspondente a esta NF e fornecedor foi localizado no relatório do ERP processado em ${generatedDate}.`);
+      markConferir(nota);
       continue;
     }
 
     const uniqueRows = [...new Map(selection.rows.map((row) => [
-      `${row.numeroNorm}|${normFornecedor(row.fornecedor)}|${row.valorTitulo}|${row.valorAberto}|${row.dataBaixa ? dateKey(row.dataBaixa) : ""}`,
+      `${row.numeroNorm}|${normFornecedor(row.fornecedor)}|${row.valorTitulo}|${row.valorAberto}|${row.dataProgramada ? dateKey(row.dataProgramada) : ""}|${row.dataBaixa ? dateKey(row.dataBaixa) : ""}`,
       row,
     ])).values()];
 
@@ -308,66 +312,46 @@ export function applyPagamentosPdf(notas: NotaFiscal[], pdfRows: PagamentoRow[],
     if (selection.kind === "shortened") {
       addReason(nota, `Título do ERP identificado pelo final da NF ${nota.notaFiscal}: ${uniqueRows.map((row) => row.numeroNorm).join(", ")}.`);
     }
-
-    const paidRows = uniqueRows.filter((row) => row.dataBaixa !== null);
-    const pendingRows = uniqueRows.filter((row) => row.dataBaixa === null);
-    const displayDates: Date[] = [];
-    let lastDayFlag = false;
-
-    for (const row of paidRows) {
-      const paidAt = row.dataBaixa as Date;
-      if (isCalendarMonthLastDay(paidAt)) {
-        displayDates.push(paidAt);
-        lastDayFlag = true;
-      } else if (ymIndex(paidAt) > mesIdx) {
-        displayDates.push(paidAt);
-      }
+    if (wasMissingInErp(previousInfo)) {
+      addReason(nota, "A planilha do mês anterior informava que a NF não constava no ERP. No relatório atual foram encontrados títulos correspondentes, e a informação foi atualizada automaticamente.");
     }
 
-    let text = "";
-    if (paidRows.length === 0 && pendingRows.length > 0) {
-      text = "Título cadastrado, mas ainda sem data programada para pagamento";
-      addReason(nota, "O título foi localizado no ERP para este fornecedor e esta NF, mas ainda não possui data de baixa ou pagamento programado.");
-    } else if (pendingRows.length > 0 && displayDates.length === 0) {
-      text = "Próximas parcelas ainda sem programação";
-      addReason(nota, "Existem parcelas cadastradas no ERP, mas ainda sem data programada para pagamento.");
-    } else if (pendingRows.length > 0) {
-      text = `${formatDateList(displayDates).replace(/\/\d{4}$/, "")} e próximas ainda sem programação`;
-      addReason(nota, "Existem parcelas já pagas e outras ainda sem data programada para pagamento.");
-    } else if (displayDates.length > 0) {
-      text = formatDateList(displayDates);
+    const relevantRows = uniqueRows.filter((row) => {
+      const scheduled = row.dataProgramada;
+      if (!scheduled) return false;
+      const scheduledMonth = ymIndex(scheduled);
+      return scheduledMonth > mesIdx || (scheduledMonth === mesIdx && isCalendarMonthLastDay(scheduled));
+    });
+
+    const lastDayRows = relevantRows.filter((row) => {
+      const scheduled = row.dataProgramada;
+      return scheduled !== null && ymIndex(scheduled) === mesIdx && isCalendarMonthLastDay(scheduled);
+    });
+    const undatedRows = uniqueRows.filter((row) => row.dataProgramada === null);
+
+    if (relevantRows.length > 0) {
+      nota.informacoes = formatDateList(relevantRows.map((row) => row.dataProgramada as Date));
+
+      const relevantTotal = roundCurrency(relevantRows.reduce((sum, row) => sum + row.valorTitulo, 0));
+      const difference = roundCurrency(relevantTotal - nota.faltaPagar);
+      if (Math.abs(difference) >= 0.01) {
+        addReason(
+          nota,
+          `A soma das parcelas consideradas após o mês conferido é ${formatBRL(relevantTotal)}, mas o FALTA PAGAR é ${formatBRL(nota.faltaPagar)}. Diferença de ${formatBRL(Math.abs(difference))}.`,
+        );
+      }
+
+      if (lastDayRows.length > 0) {
+        const dates = formatDateList(lastDayRows.map((row) => row.dataProgramada as Date));
+        addReason(nota, `A parcela de ${dates} foi programada para o último dia do mês conferido e pode ter sido compensada no primeiro dia útil do mês seguinte.`);
+      }
+    } else if (undatedRows.length > 0) {
+      nota.informacoes = "Título cadastrado, mas ainda sem data programada para pagamento";
+      addReason(nota, "O título foi localizado no ERP para este fornecedor e esta NF, mas ainda não possui data programada para pagamento.");
     } else {
-      text = inheritedInfo;
+      nota.informacoes = isAutomaticPaymentInfo(previousInfo) ? "" : stripConferir(previousInfo);
     }
 
-    nota.informacoes = text;
-
-    if (paidRows.length > 0 && pendingRows.length === 0) {
-      const valorPago = roundCurrency(paidRows.reduce((sum, row) => sum + row.valorTitulo, 0));
-      const totalLancamentosNegativos = roundCurrency(nota.valorNF - nota.faltaPagar);
-      const pagamentoJaAbatidoNaPlanilha = totalLancamentosNegativos + 0.02 >= valorPago;
-      const diferencaAssinada = pagamentoJaAbatidoNaPlanilha
-        ? roundCurrency(nota.faltaPagar)
-        : roundCurrency(nota.faltaPagar - valorPago);
-      const valorEsperado = pagamentoJaAbatidoNaPlanilha
-        ? roundCurrency(valorPago + diferencaAssinada)
-        : roundCurrency(nota.faltaPagar);
-
-      if (Math.abs(diferencaAssinada) >= 0.01) {
-        const diferenca = Math.abs(diferencaAssinada);
-        if (diferencaAssinada > 0) {
-          nota.informacoes = appendInfo(nota.informacoes, `Pagou ${formatBRL(diferenca)} a menos`);
-          addReason(nota, `Era para pagar ${formatBRL(valorEsperado)}. O PDF mostra pagamento de ${formatBRL(valorPago)}. Foram pagos ${formatBRL(diferenca)} a menos.`);
-        } else {
-          nota.informacoes = appendInfo(nota.informacoes, `Pagou ${formatBRL(diferenca)} a mais`);
-          addReason(nota, `Era para pagar ${formatBRL(valorEsperado)}. O PDF mostra pagamento de ${formatBRL(valorPago)}. Foram pagos ${formatBRL(diferenca)} a mais.`);
-        }
-      }
-    }
-
-    if (lastDayFlag) {
-      addReason(nota, "Pagamento realizado no último dia do mês. Pode ter sido compensado no banco ou no sistema no primeiro dia útil do mês seguinte.");
-    }
     if (nota.motivosConferencia.length > 0) markConferir(nota);
   }
 }
