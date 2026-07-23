@@ -672,8 +672,18 @@ export function applyPagamentosPdf(
   }
 }
 
+function taxCandidates(numero: string, byNumero: Map<string, NotaFiscal[]>): NotaFiscal[] {
+  const exact = byNumero.get(numero) ?? [];
+  if (exact.length > 0) return exact;
+  if (numero.length < 5) return [];
+
+  return [...byNumero.entries()]
+    .filter(([fullNumber]) => isSafeShortenedTitle(fullNumber, numero))
+    .flatMap(([, notas]) => notas);
+}
+
 function chooseTaxTarget(numero: string, desc: string, byNumero: Map<string, NotaFiscal[]>): NotaFiscal | null {
-  const candidates = byNumero.get(numero) ?? [];
+  const candidates = taxCandidates(numero, byNumero);
   if (candidates.length === 1) return candidates[0];
   if (candidates.length === 0) return null;
   const ranked = candidates.map((nota) => ({ nota, score: supplierScore(desc, nota.fornecedor) })).sort((a, b) => b.score - a.score);
@@ -727,11 +737,11 @@ export function transformRows(rows: SheetRow[]): TransformResult {
     if (!desc.trim() || value === null || value >= 0 || appliedRows.has(index)) return;
     const parsed = parseDescricao(desc);
     const numbers = parsed.numero ? [parsed.numero] : extractCandidateNumbers(desc);
-    const known = [...new Set(numbers.filter((number) => byNumero.has(number)))];
+    const known = [...new Set(numbers.filter((number) => taxCandidates(number, byNumero).length > 0))];
     let target: NotaFiscal | null = null;
     if (known.length === 1) target = chooseTaxTarget(known[0], desc, byNumero);
     else if (known.length > 1) {
-      const possibilities = known.flatMap((number) => (byNumero.get(number) ?? []).map((nota) => ({ nota, score: supplierScore(desc, nota.fornecedor) })));
+      const possibilities = known.flatMap((number) => taxCandidates(number, byNumero).map((nota) => ({ nota, score: supplierScore(desc, nota.fornecedor) })));
       possibilities.sort((a, b) => b.score - a.score);
       if (possibilities[0]?.score > 0 && possibilities[0].score > (possibilities[1]?.score ?? -1)) target = possibilities[0].nota;
     }

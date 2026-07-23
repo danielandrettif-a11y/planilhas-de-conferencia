@@ -250,6 +250,47 @@ describe("regras de pagamentos", () => {
 });
 
 describe("validação da planilha bruta", () => {
+  it("desconta retenção que usa o final abreviado da NF completa", () => {
+    const result = transformRows([
+      {
+        "Descrição histórico": "VALOR NF - 2026000012797-PHILIPS MEDICAL SYSTEMS LTDA",
+        Valor: 21597.46,
+        Data: date(1, 7),
+      },
+      {
+        "Descrição histórico": "VALOR RETENÇÃO DE PIS, COFINS E CSLL S/ NF 12797 PHILIPS MEDICAL SYSTEMS LTDA",
+        Valor: -1004.27,
+        Data: date(1, 7),
+      },
+    ]);
+
+    expect(result.notas[0].notaFiscal).toBe("2026000012797");
+    expect(result.notas[0].faltaPagar).toBe(20593.19);
+  });
+
+  it("não associa uma NF abreviada quando o mesmo final é ambíguo", () => {
+    const result = transformRows([
+      {
+        "Descrição histórico": "VALOR NF - 2026000012797-PHILIPS MEDICAL SYSTEMS LTDA",
+        Valor: 21597.46,
+        Data: date(1, 7),
+      },
+      {
+        "Descrição histórico": "VALOR NF - 2025000012797-PHILIPS MEDICAL SYSTEMS LTDA",
+        Valor: 5000,
+        Data: date(1, 7),
+      },
+      {
+        "Descrição histórico": "VALOR RETENÇÃO DE PIS, COFINS E CSLL S/ NF 12797 PHILIPS MEDICAL SYSTEMS LTDA",
+        Valor: -1004.27,
+        Data: date(1, 7),
+      },
+    ]);
+
+    expect(result.notas.map((item) => item.faltaPagar)).toEqual([21597.46, 5000]);
+    expect(result.notas.every((item) => item.informacoes.includes("(conferir)"))).toBe(true);
+  });
+
   it.each([
     ["1234.56", 1234.56],
     ["1.234,56", 1234.56],
