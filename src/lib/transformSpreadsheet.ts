@@ -1,5 +1,4 @@
 import type { PagamentoRow } from "./parsePagamentosPdf";
-import { buildXlsxFile } from "./buildXlsx";
 
 export type SheetRow = Record<string, unknown>;
 
@@ -10,8 +9,11 @@ export interface NotaFiscal {
   valorNF: number;
   faltaPagar: number;
   informacoes: string;
+  confiancaAssociacao: AssociationConfidence;
   motivosConferencia: string[];
 }
+
+export type AssociationConfidence = "Alta" | "Média" | "Manual";
 
 export interface TransformResult { notas: NotaFiscal[] }
 export interface SheetInput { conta: string; result: TransformResult }
@@ -19,6 +21,7 @@ export interface MesConferencia { ano: number; mes: number }
 export interface BuildXlsxOptions {
   mesConferencia?: MesConferencia;
   generatedAt?: Date;
+  empresa?: string;
 }
 
 const HIST_KEYS = ["Descrição histórico", "Descricao historico", "DescriÃ§Ã£o histÃ³rico"];
@@ -31,8 +34,6 @@ const PREV_NOTA_KEYS = [
 ];
 const PREV_INFO_KEYS = ["INFORMAÇÕES", "INFORMACOES", "Informações", "Informacoes"];
 const MONEY_TOLERANCE = 0.005;
-
-let lastWorkbookContext: (BuildXlsxOptions & { recordedAt: number }) | null = null;
 
 function findKey(row: SheetRow, candidates: string[]): string | null {
   const keys = Object.keys(row);
@@ -47,11 +48,34 @@ function findKey(row: SheetRow, candidates: string[]): string | null {
   return null;
 }
 
-function toNumber(value: unknown): number {
-  if (typeof value === "number") return value;
-  if (value == null || value === "") return 0;
-  const parsed = Number(String(value).trim().replace(/\s/g, "").replace(/\./g, "").replace(",", "."));
-  return Number.isFinite(parsed) ? parsed : 0;
+function toNumber(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (value == null || String(value).trim() === "") return null;
+
+  const cleaned = String(value)
+    .trim()
+    .replace(/\s/g, "")
+    .replace(/[^\d.,+-]/g, "");
+  if (!cleaned || !/^[+-]?[\d.,]+$/.test(cleaned)) return null;
+
+  const lastComma = cleaned.lastIndexOf(",");
+  const lastDot = cleaned.lastIndexOf(".");
+  let normalized = cleaned;
+
+  if (lastComma >= 0 && lastDot >= 0) {
+    const decimalSeparator = lastComma > lastDot ? "," : ".";
+    const thousandsSeparator = decimalSeparator === "," ? "." : ",";
+    normalized = cleaned.split(thousandsSeparator).join("");
+    normalized = normalized.replace(decimalSeparator, ".");
+  } else if (lastComma >= 0) {
+    normalized = cleaned.replace(/\./g, "").replace(",", ".");
+  } else if (lastDot >= 0) {
+    const isThousandsOnly = /^[+-]?\d{1,3}(?:\.\d{3})+$/.test(cleaned);
+    normalized = isThousandsOnly ? cleaned.replace(/\./g, "") : cleaned;
+  }
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function removeAccents(value: string): string {
@@ -176,12 +200,17 @@ function supplierMatch(a: unknown, b: unknown): SupplierMatch {
   const setA = new Set(na.significant);
   const setB = new Set(nb.significant);
   let overlap = 0;
+  let strongestOverlap = 0;
   for (const tokenA of setA) {
-    if ([...setB].some((tokenB) => tokenPrefixCompatible(tokenA, tokenB))) overlap++;
+    const matchingToken = [...setB].find((tokenB) => tokenPrefixCompatible(tokenA, tokenB));
+    if (matchingToken) {
+      overlap++;
+      strongestOverlap = Math.max(strongestOverlap, Math.min(tokenA.length, matchingToken.length));
+    }
   }
 
-  const required = Math.max(1, Math.min(2, minSignificant));
-  if (overlap >= required) {
+  const hasUsefulOverlap = overlap >= 2 || (overlap === 1 && strongestOverlap >= 4);
+  if (hasUsefulOverlap) {
     const coverage = minSignificant > 0 ? overlap / minSignificant : 0;
     return {
       score: Math.round(60 + coverage * 20),
@@ -310,6 +339,7 @@ export function applyPreviousInfo(notas: NotaFiscal[], prevMap: Map<string, Prev
       .sort((a, b) => b.score - a.score);
     if (ranked.length > 0 && (ranked.length === 1 || ranked[0].score > ranked[1].score)) {
       nota.informacoes = ranked[0].candidate.info;
+      nota.confiancaAssociacao = ranked[0].score >= 90 ? "Alta" : "Média";
     }
   }
 }
@@ -354,6 +384,14 @@ interface PaymentSelection {
   kind: MatchKind | null;
   supplierKind: SupplierMatch["kind"];
   failure: SelectionFailure | null;
+}
+
+function selectionConfidence(selection: PaymentSelection): AssociationConfidence {
+  if (selection.rows.length === 0 || selection.failure) return "Manual";
+  const supplierIsStrong = selection.supplierKind === "exact"
+    || selection.supplierKind === "normalized"
+    || selection.supplierKind === "numeric-code-removed";
+  return selection.kind === "exact" && supplierIsStrong ? "Alta" : "Média";
 }
 
 function isSafeDerivedTitle(nf: string, title: string): boolean {
@@ -479,8 +517,8 @@ function addSelectionReason(nota: NotaFiscal, selection: PaymentSelection, rows:
 
 function setSelectionFailureInfo(nota: NotaFiscal, failure: SelectionFailure | null, generatedDate: string): void {
   if (failure === "supplier-not-found") {
-    nota.informacoes = "NF localizada no ERP, mas o fornecedor não corresponde com segurança";
-    addReason(nota, "O número da NF foi localizado no relatório, porém o fornecedor não pôde ser confirmado com segurança.");
+    nota.informacoes = `Não consta no ERP até ${generatedDate}`;
+    addReason(nota, "O número da NF apareceu no relatório somente associado a fornecedores sem nenhuma palavra relevante em comum; por segurança, foi tratado como não localizado.");
   } else if (failure === "supplier-ambiguous") {
     nota.informacoes = "NF localizada para mais de um fornecedor possível";
     addReason(nota, "Mais de um fornecedor apresentou a mesma pontuação de correspondência para esta NF.");
@@ -516,6 +554,7 @@ function setPaymentDifferenceInfo(nota: NotaFiscal, paid: number): boolean {
     nota.informacoes = `Pagou ${formatBRL(Math.abs(difference))} a menos`;
     addReason(nota, `O valor da NF é ${formatBRL(nota.valorNF)}, mas o pagamento localizado no ERP foi de ${formatBRL(paid)}. Foram pagos ${formatBRL(Math.abs(difference))} a menos.`);
   } else {
+    nota.faltaPagar = -difference;
     nota.informacoes = `Pagou ${formatBRL(difference)} a mais`;
     addReason(nota, `O valor da NF é ${formatBRL(nota.valorNF)}, mas o pagamento localizado no ERP foi de ${formatBRL(paid)}. Foram pagos ${formatBRL(difference)} a mais.`);
   }
@@ -528,7 +567,6 @@ export function applyPagamentosPdf(
   opts: { mesConferencia: MesConferencia; generatedAt?: Date },
 ): void {
   const generatedAt = opts.generatedAt ?? new Date();
-  lastWorkbookContext = { mesConferencia: opts.mesConferencia, generatedAt, recordedAt: Date.now() };
   if (pdfRows.length === 0) return;
 
   const mesIdx = opts.mesConferencia.ano * 12 + opts.mesConferencia.mes - 1;
@@ -541,11 +579,13 @@ export function applyPagamentosPdf(
     const selection = selectPaymentsForInvoice(nota, normalized);
 
     if (selection.rows.length === 0) {
+      nota.confiancaAssociacao = "Manual";
       setSelectionFailureInfo(nota, selection.failure, generatedDate);
       continue;
     }
 
     const rows = uniquePayments(selection.rows);
+    nota.confiancaAssociacao = selectionConfidence(selection);
     if (rows.length < selection.rows.length) {
       addReason(nota, "O PDF continha lançamentos duplicados; as duplicidades foram ignoradas.");
     }
@@ -569,6 +609,7 @@ export function applyPagamentosPdf(
     const openUndatedRows = openRows.filter((row) => row.dataProgramada === null);
     const totalAberto = paymentTotal(rows, "valorAberto");
     const totalPago = paidTotal(rows);
+    const paidDates = rows.map((row) => row.dataBaixa).filter((date): date is Date => date !== null);
 
     if (relevantRows.length > 0) {
       const dates = formatDateList(relevantRows.map((row) => row.dataProgramada as Date));
@@ -606,10 +647,15 @@ export function applyPagamentosPdf(
       }
     } else if (!setPaymentDifferenceInfo(nota, totalPago)) {
       if (nota.faltaPagar > MONEY_TOLERANCE) {
-        nota.informacoes = `ERP indica pagamento integral, mas a planilha ainda possui ${formatBRL(nota.faltaPagar)} em aberto`;
+        const formattedPaidDates = formatDateList(paidDates).replace(/\/\d{4}$/, "");
+        const paymentDateText = paidDates.length === 1
+          ? ` no dia ${formattedPaidDates}`
+          : paidDates.length > 1
+            ? ` nos dias ${formattedPaidDates}`
+            : "";
+        nota.informacoes = `ERP indica pagamento integral${paymentDateText}, mas a planilha ainda possui ${formatBRL(nota.faltaPagar)} em aberto`;
         addReason(nota, `O título foi localizado no ERP com valor em aberto de ${formatBRL(totalAberto)} e pagamento de ${formatBRL(totalPago)}. Porém, a planilha informa FALTA PAGAR de ${formatBRL(nota.faltaPagar)}. Conferir se o pagamento ainda não foi lançado ou abatido na conta.`);
       } else {
-        const paidDates = rows.map((row) => row.dataBaixa).filter((date): date is Date => date !== null);
         nota.informacoes = paidDates.length > 0 ? `Pagamento localizado no ERP em ${formatDateList(paidDates)}` : "Pagamento integral localizado no ERP";
       }
     }
@@ -650,11 +696,15 @@ export function transformRows(rows: SheetRow[]): TransformResult {
 
   const notas: NotaFiscal[] = [];
   const byNumero = new Map<string, NotaFiscal[]>();
-  for (const row of rows) {
+  for (const [index, row] of rows.entries()) {
     const desc = String(row[histKey] ?? "");
     const parsed = parseDescricao(desc);
     const rawValue = toNumber(row[valorKey]);
-    if (!parsed.isNF || rawValue < 0) continue;
+    if (!parsed.isNF) continue;
+    if (rawValue === null) {
+      throw new Error(`Valor inválido na linha ${index + 2} da coluna "${valorKey}".`);
+    }
+    if (rawValue < 0) continue;
     const nota: NotaFiscal = {
       data: (row[dataKey] as Date | string | number | null) ?? null,
       fornecedor: parsed.fornecedor,
@@ -662,6 +712,7 @@ export function transformRows(rows: SheetRow[]): TransformResult {
       valorNF: Math.abs(rawValue),
       faltaPagar: Math.abs(rawValue),
       informacoes: "",
+      confiancaAssociacao: "Manual",
       motivosConferencia: [],
     };
     notas.push(nota);
@@ -673,7 +724,7 @@ export function transformRows(rows: SheetRow[]): TransformResult {
   rows.forEach((row, index) => {
     const desc = String(row[histKey] ?? "");
     const value = toNumber(row[valorKey]);
-    if (!desc.trim() || value >= 0 || appliedRows.has(index)) return;
+    if (!desc.trim() || value === null || value >= 0 || appliedRows.has(index)) return;
     const parsed = parseDescricao(desc);
     const numbers = parsed.numero ? [parsed.numero] : extractCandidateNumbers(desc);
     const known = [...new Set(numbers.filter((number) => byNumero.has(number)))];
@@ -692,10 +743,49 @@ export function transformRows(rows: SheetRow[]): TransformResult {
   return { notas };
 }
 
+export interface DuplicateInvoiceAlert {
+  numero: string;
+  quantidade: number;
+  contas: string[];
+  fornecedores: string[];
+}
+
+export function flagDuplicateInvoices(sheets: SheetInput[]): DuplicateInvoiceAlert[] {
+  const occurrences = new Map<string, Array<{ conta: string; nota: NotaFiscal }>>();
+
+  for (const sheet of sheets) {
+    for (const nota of sheet.result.notas) {
+      const numero = normNota(nota.notaFiscal);
+      if (!numero || numero === "0") continue;
+      occurrences.set(numero, [...(occurrences.get(numero) ?? []), { conta: sheet.conta, nota }]);
+    }
+  }
+
+  const alerts: DuplicateInvoiceAlert[] = [];
+  for (const [numero, items] of occurrences) {
+    if (items.length < 2) continue;
+    const contas = [...new Set(items.map((item) => item.conta))]
+      .sort((a, b) => a.localeCompare(b, "pt-BR", { numeric: true }));
+    const fornecedores = [...new Set(items.map((item) => item.nota.fornecedor).filter(Boolean))];
+    const reason = `NF ${numero} repetida ${items.length} vezes na entrada; associação marcada para conferência manual.`;
+
+    for (const { nota } of items) {
+      nota.confiancaAssociacao = "Manual";
+      addReason(nota, reason);
+      markConferir(nota);
+    }
+
+    alerts.push({ numero, quantidade: items.length, contas, fornecedores });
+  }
+
+  return alerts.sort((a, b) => a.numero.localeCompare(b.numero, "pt-BR", { numeric: true }));
+}
+
 export async function buildXlsx(input: TransformResult | SheetInput[], options: BuildXlsxOptions = {}): Promise<Blob> {
-  const freshContext = lastWorkbookContext && Date.now() - lastWorkbookContext.recordedAt < 60_000 ? lastWorkbookContext : null;
+  const { buildXlsxFile } = await import("./buildXlsx");
   return buildXlsxFile(input, {
-    mesConferencia: options.mesConferencia ?? freshContext?.mesConferencia,
-    generatedAt: options.generatedAt ?? freshContext?.generatedAt ?? new Date(),
+    mesConferencia: options.mesConferencia,
+    generatedAt: options.generatedAt ?? new Date(),
+    empresa: options.empresa,
   });
 }

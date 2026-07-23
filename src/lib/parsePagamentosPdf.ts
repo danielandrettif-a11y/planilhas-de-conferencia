@@ -24,6 +24,11 @@ export interface PagamentosPdfResult {
   uniqueTitles: number;
 }
 
+export interface PdfProcessingProgress {
+  processedPages: number;
+  totalPages: number;
+}
+
 function groupByLine(items: TextItem[]): TextItem[][] {
   const sorted = [...items].sort((a, b) => b.y - a.y || a.x - b.x);
   const lines: TextItem[][] = [];
@@ -97,10 +102,14 @@ function validateRows(rows: PagamentoRow[]): void {
   }
 }
 
-export async function parsePagamentosPdfDetailed(file: File): Promise<PagamentosPdfResult> {
+export async function parsePagamentosPdfDetailed(
+  file: File,
+  onProgress?: (progress: PdfProcessingProgress) => void,
+): Promise<PagamentosPdfResult> {
   const buffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
   const rows: PagamentoRow[] = [];
+  onProgress?.({ processedPages: 0, totalPages: pdf.numPages });
 
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
     const page = await pdf.getPage(pageNumber);
@@ -117,6 +126,8 @@ export async function parsePagamentosPdfDetailed(file: File): Promise<Pagamentos
       const row = parsePositionedLine(line, viewport.width) ?? parsePagamentoLine(joinLine(line));
       if (row) rows.push(row);
     }
+
+    onProgress?.({ processedPages: pageNumber, totalPages: pdf.numPages });
   }
 
   validateRows(rows);
