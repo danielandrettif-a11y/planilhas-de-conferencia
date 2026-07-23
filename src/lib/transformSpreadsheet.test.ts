@@ -4,6 +4,8 @@ import { parsePagamentoLine } from "./parsePagamentoLine";
 import {
   applyPagamentosPdf,
   buildXlsx,
+  flagDuplicateInvoices,
+  transformRows,
   type NotaFiscal,
   type SheetInput,
 } from "./transformSpreadsheet";
@@ -21,6 +23,7 @@ function nota(overrides: Partial<NotaFiscal> = {}): NotaFiscal {
     valorNF: 87458.6,
     faltaPagar: 58305.74,
     informacoes: "",
+    confiancaAssociacao: "Manual",
     motivosConferencia: [],
     ...overrides,
   };
@@ -42,6 +45,15 @@ function pagamento(
     dataProgramada,
     dataBaixa,
   };
+}
+
+function blobToArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as ArrayBuffer);
+    reader.onerror = () => reject(reader.error ?? new Error("Falha ao ler o arquivo gerado."));
+    reader.readAsArrayBuffer(blob);
+  });
 }
 
 describe("parser de linhas do PDF", () => {
@@ -130,6 +142,59 @@ describe("regras de pagamentos", () => {
     expect(current.informacoes).toContain("Pagou R$ 0,08 a menos");
   });
 
+  it("transforma pagamento a mais em saldo negativo", () => {
+    const current = nota({
+      fornecedor: "MARTEC MED INDUSTRIA E COMERCIO DE EQUIP",
+      notaFiscal: "6179",
+      valorNF: 15395.35,
+      faltaPagar: 15395.35,
+    });
+    const rows = [pagamento(
+      "6179",
+      date(10, 10, 2025),
+      18395.35,
+      date(10, 10, 2025),
+      "MARTEC MED INDUSTRIA E COMERCIO DE EQUIPAMENTOS ME",
+    )];
+
+    applyPagamentosPdf([current], rows, {
+      mesConferencia: { ano: 2026, mes: 5 },
+      generatedAt: date(22, 7),
+    });
+
+    expect(current.faltaPagar).toBe(-3000);
+    expect(current.informacoes).toContain("Pagou R$ 3.000,00 a mais");
+    expect(current.confiancaAssociacao).toBe("Média");
+  });
+
+  it("aceita uma palavra relevante em comum no nome do fornecedor", () => {
+    const current = nota({ fornecedor: "MARTEC EQUIPAMENTOS", notaFiscal: "6179", valorNF: 100, faltaPagar: 0 });
+    const rows = [pagamento("6179", date(10, 5), 100, date(10, 5), "MARTEC SOLUCOES HOSPITALARES")];
+
+    applyPagamentosPdf([current], rows, {
+      mesConferencia: { ano: 2026, mes: 5 },
+      generatedAt: date(22, 7),
+    });
+
+    expect(current.informacoes).not.toContain("Não consta no ERP");
+    expect(current.motivosConferencia.join(" ")).toContain("palavras relevantes em comum");
+    expect(current.confiancaAssociacao).toBe("Média");
+  });
+
+  it("trata fornecedor totalmente diferente como não localizado", () => {
+    const current = nota({ fornecedor: "FORNECEDOR ALFA", notaFiscal: "6179" });
+    const rows = [pagamento("6179", date(10, 5), current.valorNF, date(10, 5), "EMPRESA BETA")];
+
+    applyPagamentosPdf([current], rows, {
+      mesConferencia: { ano: 2026, mes: 5 },
+      generatedAt: date(22, 7),
+    });
+
+    expect(current.informacoes).toContain("Não consta no ERP até 22/07/2026");
+    expect(current.informacoes).not.toContain("fornecedor não corresponde");
+    expect(current.confiancaAssociacao).toBe("Manual");
+  });
+
   it("ignora código numérico e aceita nome truncado", () => {
     const current = nota({
       fornecedor: "NAGELA DA SILVA FERREIRA SOUZA 146942317",
@@ -161,8 +226,9 @@ describe("regras de pagamentos", () => {
       generatedAt: date(22, 7),
     });
 
-    expect(current.informacoes).toContain("ERP indica pagamento integral");
-    expect(current.informacoes).toContain("R$ 176,00");
+    expect(current.informacoes).toContain("ERP indica pagamento integral no dia 30/05");
+    expect(current.informacoes).toContain("R$ 176,00 em aberto");
+    expect(current.confiancaAssociacao).toBe("Alta");
   });
 
   it("diferencia título sem programação de título programado sem baixa", () => {
@@ -183,6 +249,50 @@ describe("regras de pagamentos", () => {
   });
 });
 
+describe("validação da planilha bruta", () => {
+  it.each([
+    ["1234.56", 1234.56],
+    ["1.234,56", 1234.56],
+    ["1,234.56", 1234.56],
+    ["1.234", 1234],
+  ])("interpreta o valor textual %s como %s", (valor, esperado) => {
+    const result = transformRows([{
+      "Descrição histórico": "VALOR NF - 304125 KONIMAGEM COMERCIAL LTDA",
+      Valor: valor,
+      Data: date(4, 3),
+    }]);
+
+    expect(result.notas[0].valorNF).toBe(esperado);
+    expect(result.notas[0].faltaPagar).toBe(esperado);
+  });
+
+  it("rejeita valor monetário inválido em uma linha de nota fiscal", () => {
+    expect(() => transformRows([
+      {
+        "Descrição histórico": "VALOR NF - 304125 KONIMAGEM COMERCIAL LTDA",
+        Valor: "valor inválido",
+        Data: date(4, 3),
+      },
+    ])).toThrow('Valor inválido na linha 2 da coluna "Valor".');
+  });
+
+  it("marca NFs repetidas para associação manual", () => {
+    const first = nota({ notaFiscal: "123", confiancaAssociacao: "Alta" });
+    const second = nota({ notaFiscal: "123", fornecedor: "Outro Fornecedor", confiancaAssociacao: "Média" });
+    const sheets: SheetInput[] = [
+      { conta: "81354", result: { notas: [first] } },
+      { conta: "81355", result: { notas: [second] } },
+    ];
+
+    const alerts = flagDuplicateInvoices(sheets);
+
+    expect(alerts).toEqual([expect.objectContaining({ numero: "123", quantidade: 2, contas: ["81354", "81355"] })]);
+    expect(first.confiancaAssociacao).toBe("Manual");
+    expect(second.confiancaAssociacao).toBe("Manual");
+    expect(first.motivosConferencia.join(" ")).toContain("NF 123 repetida 2 vezes");
+  });
+});
+
 describe("arquivo Excel", () => {
   it("cria nomes contábeis e saldos ligados às abas", async () => {
     const sheets: SheetInput[] = [
@@ -193,21 +303,97 @@ describe("arquivo Excel", () => {
     const blob = await buildXlsx(sheets, {
       mesConferencia: { ano: 2026, mes: 5 },
       generatedAt: date(22, 7),
+      empresa: "Instituto de Medicina Nuclear",
     });
 
     const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(await blob.arrayBuffer());
+    await workbook.xlsx.load(await blobToArrayBuffer(blob));
 
     expect(workbook.worksheets[0].name).toBe("Geral");
     expect(workbook.worksheets[1].name).toContain("81354");
     expect(workbook.worksheets[2].name).toContain("81362");
 
     const geral = workbook.getWorksheet("Geral");
-    expect(geral?.getCell("A6").value).toMatchObject({ text: "Material e Medicamentos - 81354" });
-    expect(geral?.getCell("A7").value).toMatchObject({ text: "Prestadores de Serviços - 81362" });
+    expect(geral?.getColumn("C").width).toBe(48);
+    expect(geral?.getColumn("E").width).toBe(21);
+    expect(geral?.views[0]?.state).toBe("normal");
+    expect(geral?.views[0]?.ySplit).toBeUndefined();
+    expect(geral?.views[0]?.showGridLines).toBe(false);
+    expect(geral?.getCell("D1").value).toBe("Resumo Geral");
+    expect(geral?.getCell("D2").value).toBe("Empresa: Instituto de Medicina Nuclear");
+    expect(geral?.getCell("D3").value).toBe("Mês de conferência: maio/2026");
+    expect(geral?.getCell("D4").value).toBe("Planilha feita em: 22/07/2026");
+    expect(geral?.getCell("D5").value).toBe("NOME DA CONTA DO FORNECEDOR");
+    const nameLink = geral?.getCell("D6").value as ExcelJS.CellFormulaValue;
+    expect(nameLink.formula).toBe('HYPERLINK("#\'81354\'!A1","Material e Medicamentos")');
+    expect(nameLink.result).toBe("Material e Medicamentos");
 
-    const saldo = geral?.getCell("B6").value as ExcelJS.CellFormulaValue;
+    const codeLink = geral?.getCell("E6").value as ExcelJS.CellFormulaValue;
+    expect(codeLink.formula).toBe('HYPERLINK("#\'81354\'!A1","81354")');
+    expect(codeLink.result).toBe("81354");
+
+    expect(geral?.getCell("D7").value).toMatchObject({ result: "Prestadores de Serviços" });
+    expect(geral?.getCell("D8").value).toBeNull();
+    expect(geral?.getCell("D6").border.bottom?.color?.argb).toBe("FF000000");
+
+    const backLink = workbook.getWorksheet("81354")?.getCell("A1").value as ExcelJS.CellFormulaValue;
+    expect(backLink.formula).toContain('HYPERLINK("#\'Geral\'!D1"');
+
+    const accountSheet = workbook.getWorksheet("81354");
+    expect(accountSheet?.views[0]?.state).toBe("normal");
+    expect(accountSheet?.views[0]?.ySplit).toBeUndefined();
+    expect(accountSheet?.getCell("G2").value).toBe("CONFIANÇA DA ASSOCIAÇÃO");
+    expect(accountSheet?.getCell("G3").value).toBe("Manual");
+    expect(accountSheet?.getCell("H2").value).toBe("MOTIVO DA CONFERÊNCIA");
+
+    const saldo = geral?.getCell("F6").value as ExcelJS.CellFormulaValue;
     expect(saldo.formula).toContain("!E4");
     expect(saldo.result).toBe(28458.35);
+  });
+
+  it("leva o pagamento excedente negativo para o saldo da conta", async () => {
+    const sheets: SheetInput[] = [
+      { conta: "81354", result: { notas: [nota({ faltaPagar: -3000 })] } },
+    ];
+
+    const blob = await buildXlsx(sheets, { mesConferencia: { ano: 2026, mes: 5 } });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(await blobToArrayBuffer(blob));
+
+    const saldo = workbook.getWorksheet("Geral")?.getCell("F6").value as ExcelJS.CellFormulaValue;
+    expect(saldo.result).toBe(-3000);
+  });
+
+  it("mantém a conta 81362 como a última aba", async () => {
+    const sheets: SheetInput[] = [
+      { conta: "81362", result: { notas: [nota()] } },
+      { conta: "81363", result: { notas: [nota()] } },
+      { conta: "81354", result: { notas: [nota()] } },
+    ];
+
+    const blob = await buildXlsx(sheets, { mesConferencia: { ano: 2026, mes: 5 } });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(await blobToArrayBuffer(blob));
+
+    expect(workbook.worksheets.map((worksheet) => worksheet.name)).toEqual([
+      "Geral",
+      "81354",
+      "81363",
+      "81362",
+    ]);
+  });
+
+  it("não reutiliza o mês de uma geração anterior", async () => {
+    const sheets: SheetInput[] = [
+      { conta: "81354", result: { notas: [nota()] } },
+    ];
+
+    await buildXlsx(sheets, { mesConferencia: { ano: 2026, mes: 5 } });
+    const blob = await buildXlsx(sheets);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(await blobToArrayBuffer(blob));
+
+    expect(workbook.getWorksheet("Geral")?.getCell("D3").value)
+      .toBe("Mês de conferência: não informado");
   });
 });

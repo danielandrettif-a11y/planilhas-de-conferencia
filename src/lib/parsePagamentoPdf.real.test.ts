@@ -55,4 +55,15 @@ describe("parser do relatório real do ERP", () => {
     expect(row?.dataProgramada).toEqual(new Date(2026, 7, 1));
     expect(row?.dataBaixa).toBeNull();
   });
+
+  it("rejeita valores monetários inválidos", () => {
+    const row = parsePagamentoColumns({
+      numero: "30412500005",
+      fornecedor: "KONIMAGEM COMERCIAL LTDA",
+      valorTitulo: "valor inválido",
+      valorAberto: "14.576,43",
+    });
+
+    expect(row).toBeNull();
+  });
 });

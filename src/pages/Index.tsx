@@ -1,6 +1,6 @@
-import { useCallback, useRef, useState } from "react";
-import * as XLSX from "xlsx";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
+  AlertTriangle,
   Check,
   Download,
   FileSpreadsheet,
@@ -27,16 +27,12 @@ import {
   applyPreviousInfo,
   buildPreviousInfoMap,
   buildXlsx,
+  flagDuplicateInvoices,
   transformRows,
   type SheetInput,
   type SheetRow,
 } from "@/lib/transformSpreadsheet";
-import {
-  parsePagamentosPdfDetailed,
-  type PagamentoRow,
-  type PagamentosPdfResult,
-} from "@/lib/parsePagamentosPdf";
-import { setWorkbookCompanyName } from "@/lib/buildXlsx";
+import type { PagamentoRow, PdfProcessingProgress } from "@/lib/parsePagamentosPdf";
 
 const ACCEPTED = [".xlsx", ".xls"];
 
@@ -144,6 +140,18 @@ function findPreviousRows(prevSheets: Record<string, SheetRow[]>, conta: string)
   return matchingKey ? prevSheets[matchingKey] : null;
 }
 
+function findDuplicateNfs(rawFiles: RawFile[]) {
+  const sheets: SheetInput[] = [];
+  for (const raw of rawFiles) {
+    try {
+      sheets.push({ conta: raw.conta, result: transformRows(raw.rows) });
+    } catch {
+      // A validação detalhada do arquivo continuará acontecendo na geração.
+    }
+  }
+  return flagDuplicateInvoices(sheets);
+}
+
 const Index = () => {
   const [empresa, setEmpresa] = useState("");
   const [mesConferencia, setMesConferencia] = useState(defaultMes());
@@ -156,17 +164,20 @@ const Index = () => {
   const [prevSkipped, setPrevSkipped] = useState(false);
 
   const [rawFiles, setRawFiles] = useState<RawFile[]>([]);
+  const [rawDuplicateWarnings, setRawDuplicateWarnings] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
 
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [pdfRows, setPdfRows] = useState<PagamentoRow[]>([]);
-  const [pdfStats, setPdfStats] = useState<PagamentosPdfResult | null>(null);
+  const [pdfProgress, setPdfProgress] = useState<PdfProcessingProgress | null>(null);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [pdfDragOver, setPdfDragOver] = useState(false);
   const [pdfSkipped, setPdfSkipped] = useState(false);
 
   const [generating, setGenerating] = useState(false);
+
+  const duplicateNfAlerts = useMemo(() => findDuplicateNfs(rawFiles), [rawFiles]);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const prevInputRef = useRef<HTMLInputElement>(null);
@@ -188,13 +199,14 @@ const Index = () => {
 
   const resetRaw = () => {
     setRawFiles([]);
+    setRawDuplicateWarnings([]);
     if (inputRef.current) inputRef.current.value = "";
   };
 
   const resetPdf = () => {
     setPdfFile(null);
     setPdfRows([]);
-    setPdfStats(null);
+    setPdfProgress(null);
     if (pdfInputRef.current) pdfInputRef.current.value = "";
   };
 
@@ -207,6 +219,7 @@ const Index = () => {
 
     setPrevLoading(true);
     try {
+      const XLSX = await import("xlsx");
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
       const sheets: Record<string, SheetRow[]> = {};
@@ -254,8 +267,12 @@ const Index = () => {
 
     setLoading(true);
     try {
+      const XLSX = await import("xlsx");
       const parsed: RawFile[] = [];
       const skipped: string[] = [];
+      const duplicateWarnings: string[] = [];
+      const knownNames = new Set(rawFiles.map((item) => item.file.name.trim().toLowerCase()));
+      const knownAccounts = new Map(rawFiles.map((item) => [item.conta, item.file.name]));
 
       for (const file of files) {
         const lower = file.name.toLowerCase();
@@ -268,9 +285,21 @@ const Index = () => {
           continue;
         }
 
+        const normalizedName = file.name.trim().toLowerCase();
+        if (knownNames.has(normalizedName)) {
+          duplicateWarnings.push(`O arquivo "${file.name}" foi enviado duas vezes. A segunda cópia foi ignorada.`);
+          continue;
+        }
+
         const conta = extractConta(file.name);
         if (!conta) {
           skipped.push(`${file.name} (sem código no nome — ex.: 81354.xls)`);
+          continue;
+        }
+
+        const existingAccountFile = knownAccounts.get(conta);
+        if (existingAccountFile) {
+          duplicateWarnings.push(`A conta ${conta} está duplicada nos arquivos "${existingAccountFile}" e "${file.name}". O segundo arquivo foi ignorado.`);
           continue;
         }
 
@@ -291,6 +320,8 @@ const Index = () => {
             continue;
           }
           parsed.push({ file, conta, rows });
+          knownNames.add(normalizedName);
+          knownAccounts.set(conta, file.name);
         } catch (error) {
           if (import.meta.env.DEV) console.error(error);
           skipped.push(`${file.name} (falha ao ler)`);
@@ -298,10 +329,17 @@ const Index = () => {
       }
 
       setRawFiles((previous) => {
-        const byAccount = new Map(previous.map((item) => [item.conta, item]));
-        for (const item of parsed) byAccount.set(item.conta, item);
-        return Array.from(byAccount.values()).sort((a, b) => Number(a.conta) - Number(b.conta));
+        return [...previous, ...parsed].sort((a, b) => Number(a.conta) - Number(b.conta));
       });
+
+      if (duplicateWarnings.length > 0) {
+        setRawDuplicateWarnings((previous) => [...new Set([...previous, ...duplicateWarnings])]);
+        toast({
+          title: "Arquivo ou conta duplicada",
+          description: duplicateWarnings.join(" · "),
+          variant: "destructive",
+        });
+      }
 
       if (skipped.length > 0) {
         toast({ title: "Alguns arquivos foram ignorados", description: skipped.join(" · "), variant: "destructive" });
@@ -310,7 +348,7 @@ const Index = () => {
       setLoading(false);
       if (inputRef.current) inputRef.current.value = "";
     }
-  }, []);
+  }, [rawFiles]);
 
   const handlePdfFile = useCallback(async (file: File) => {
     if (!file.name.toLowerCase().endsWith(".pdf")) {
@@ -319,11 +357,12 @@ const Index = () => {
     }
 
     setPdfLoading(true);
+    setPdfProgress({ processedPages: 0, totalPages: 0 });
     try {
-      const result = await parsePagamentosPdfDetailed(file);
+      const { parsePagamentosPdfDetailed } = await import("@/lib/parsePagamentosPdf");
+      const result = await parsePagamentosPdfDetailed(file, setPdfProgress);
       setPdfFile(file);
       setPdfRows(result.rows);
-      setPdfStats(result);
       setPdfSkipped(false);
       toast({
         title: "PDF validado",
@@ -339,6 +378,7 @@ const Index = () => {
       });
     } finally {
       setPdfLoading(false);
+      setPdfProgress(null);
     }
   }, []);
 
@@ -365,9 +405,12 @@ const Index = () => {
         totalNotas += result.notas.length;
       }
 
+      flagDuplicateInvoices(sheets);
       sheets.sort((a, b) => Number(a.conta) - Number(b.conta));
-      setWorkbookCompanyName(empresa);
-      const blob = await buildXlsx(sheets);
+      const blob = await buildXlsx(sheets, {
+        mesConferencia: { ano: year, mes: month },
+        empresa,
+      });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
@@ -378,7 +421,7 @@ const Index = () => {
       URL.revokeObjectURL(url);
 
       toast({
-        title: "Planilha gerada",
+        title: "Planilha feita",
         description: `${sheets.length} aba(s) · ${totalNotas} nota(s). Nenhum dado foi armazenado.`,
       });
     } catch (error) {
@@ -436,7 +479,6 @@ const Index = () => {
 
         {step === 1 && (
           <StepCard step="01" title="Empresa" description="Informe o nome da empresa que aparecerá no resumo da planilha.">
-            <StepNavigation next={() => setStep(2)} nextDisabled={!stepDone[1]} />
             <div className="space-y-2">
               <label htmlFor="empresa" className="text-sm font-medium">Nome da empresa</label>
               <input
@@ -447,6 +489,7 @@ const Index = () => {
                 className="h-11 w-full rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
+            <StepNavigation next={() => setStep(2)} nextDisabled={!stepDone[1]} />
           </StepCard>
         )}
 
@@ -456,7 +499,6 @@ const Index = () => {
             title="Mês de conferência"
             description="O mês selecionado define quais parcelas futuras serão exibidas. Parcelas do último dia do mês permanecem com aviso."
           >
-            <StepNavigation back={() => setStep(1)} next={() => setStep(3)} nextDisabled={!stepDone[2]} />
             <Select value={mesConferencia} onValueChange={setMesConferencia}>
               <SelectTrigger className="w-full sm:w-72"><SelectValue placeholder="Selecione o mês" /></SelectTrigger>
               <SelectContent className="max-h-72">
@@ -465,6 +507,7 @@ const Index = () => {
                 ))}
               </SelectContent>
             </Select>
+            <StepNavigation back={() => setStep(1)} next={() => setStep(3)} nextDisabled={!stepDone[2]} />
           </StepCard>
         )}
 
@@ -475,7 +518,6 @@ const Index = () => {
             badge="opcional"
             description="Importa as informações existentes e preserva mensagens anteriores quando ainda forem aplicáveis."
           >
-            <StepNavigation back={() => setStep(2)} next={() => setStep(4)} nextDisabled={!stepDone[3]} />
             <div className="space-y-4">
               {!prevSkipped ? (
                 prevFile ? (
@@ -519,6 +561,7 @@ const Index = () => {
                 Não tenho a planilha do mês anterior
               </label>
             </div>
+            <StepNavigation back={() => setStep(2)} next={() => setStep(4)} nextDisabled={!stepDone[3]} />
           </StepCard>
         )}
 
@@ -528,7 +571,6 @@ const Index = () => {
             title="Planilhas brutas"
             description="Envie uma ou mais planilhas. O nome do arquivo deve conter o número da conta, como 81354.xls."
           >
-            <StepNavigation back={() => setStep(3)} next={() => setStep(5)} nextDisabled={!stepDone[4]} />
             <div className="space-y-4">
               <Dropzone
                 inputRef={inputRef}
@@ -544,6 +586,23 @@ const Index = () => {
                 }}
                 onSelect={handleRawFiles}
               />
+
+              {rawDuplicateWarnings.length > 0 && (
+                <WarningBox title="Arquivos ou contas duplicadas">
+                  {rawDuplicateWarnings.map((warning) => <div key={warning}>{warning}</div>)}
+                </WarningBox>
+              )}
+
+              {duplicateNfAlerts.length > 0 && (
+                <WarningBox title="Notas fiscais repetidas">
+                  {duplicateNfAlerts.map((alert) => (
+                    <div key={alert.numero}>
+                      NF {alert.numero} aparece {alert.quantidade} vezes
+                      {alert.contas.length > 0 ? ` · conta(s) ${alert.contas.join(", ")}` : ""}.
+                    </div>
+                  ))}
+                </WarningBox>
+              )}
 
               {rawFiles.length > 0 && (
                 <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
@@ -563,6 +622,7 @@ const Index = () => {
                 </div>
               )}
             </div>
+            <StepNavigation back={() => setStep(3)} next={() => setStep(5)} nextDisabled={!stepDone[4]} />
           </StepCard>
         )}
 
@@ -573,44 +633,37 @@ const Index = () => {
             badge="opcional"
             description="O PDF é validado antes da geração para evitar que uma falha de leitura marque todas as NFs como ausentes no ERP."
           >
-            <StepNavigation back={() => setStep(4)} next={() => setStep(6)} nextDisabled={!stepDone[5]} />
             <div className="space-y-4">
               {!pdfSkipped ? (
                 pdfFile ? (
-                  <>
-                    <FileChip
-                      name={pdfFile.name}
-                      info={`${formatSize(pdfFile.size)} · ${pdfRows.length} títulos lidos`}
-                      onRemove={resetPdf}
-                      icon="pdf"
-                    />
-                    {pdfStats && (
-                      <div className="grid gap-3 sm:grid-cols-3">
-                        <Metric label="Páginas" value={String(pdfStats.pages)} />
-                        <Metric label="Títulos lidos" value={String(pdfStats.rows.length)} />
-                        <Metric label="Números diferentes" value={String(pdfStats.uniqueTitles)} />
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <Dropzone
-                    inputRef={pdfInputRef}
-                    dragOver={pdfDragOver}
-                    setDragOver={setPdfDragOver}
-                    loading={pdfLoading}
-                    accept=".pdf"
-                    label="Solte o PDF de pagamentos aqui"
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      setPdfDragOver(false);
-                      const file = event.dataTransfer.files?.[0];
-                      if (file) handlePdfFile(file);
-                    }}
-                    onSelect={(files) => {
-                      const file = Array.from(files)[0];
-                      if (file) handlePdfFile(file);
-                    }}
+                  <FileChip
+                    name={pdfFile.name}
+                    info={`${formatSize(pdfFile.size)} · ${pdfRows.length} títulos lidos`}
+                    onRemove={resetPdf}
+                    icon="pdf"
                   />
+                ) : (
+                  <div className="space-y-3">
+                    <Dropzone
+                      inputRef={pdfInputRef}
+                      dragOver={pdfDragOver}
+                      setDragOver={setPdfDragOver}
+                      loading={pdfLoading}
+                      accept=".pdf"
+                      label="Solte o PDF de pagamentos aqui"
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        setPdfDragOver(false);
+                        const file = event.dataTransfer.files?.[0];
+                        if (file) handlePdfFile(file);
+                      }}
+                      onSelect={(files) => {
+                        const file = Array.from(files)[0];
+                        if (file) handlePdfFile(file);
+                      }}
+                    />
+                    {pdfLoading && <PdfProgressBar progress={pdfProgress} />}
+                  </div>
                 )
               ) : (
                 <InfoBox>Sem PDF. A planilha utilizará apenas as informações herdadas do mês anterior.</InfoBox>
@@ -628,12 +681,12 @@ const Index = () => {
                 Não tenho o PDF de pagamentos
               </label>
             </div>
+            <StepNavigation back={() => setStep(4)} next={() => setStep(6)} nextDisabled={!stepDone[5]} />
           </StepCard>
         )}
 
         {step === 6 && (
           <section className="relative overflow-hidden rounded-3xl border border-primary/30 bg-[var(--gradient-surface)] p-6 shadow-[var(--shadow-soft)] sm:p-8">
-            <StepNavigation back={() => setStep(5)} />
             <div className="space-y-6">
               <div>
                 <p className="font-mono text-xs uppercase tracking-[0.25em] text-primary">06 · finalizar</p>
@@ -646,6 +699,14 @@ const Index = () => {
                 <SummaryRow ok={rawFiles.length > 0} label={`Planilhas brutas: ${rawFiles.length} arquivo(s)`} />
                 <SummaryRow ok={pdfFile !== null} label={pdfFile ? `PDF: ${pdfRows.length} título(s) validados` : "PDF: não enviado"} />
               </ul>
+              {(rawDuplicateWarnings.length > 0 || duplicateNfAlerts.length > 0) && (
+                <WarningBox title="Itens que exigem atenção">
+                  {rawDuplicateWarnings.map((warning) => <div key={warning}>{warning}</div>)}
+                  {duplicateNfAlerts.map((alert) => (
+                    <div key={alert.numero}>NF {alert.numero} repetida {alert.quantidade} vezes; confiança marcada como Manual.</div>
+                  ))}
+                </WarningBox>
+              )}
               <Button
                 size="lg"
                 onClick={onGenerate}
@@ -656,6 +717,7 @@ const Index = () => {
                 Gerar planilha
               </Button>
             </div>
+            <StepNavigation back={() => setStep(5)} />
           </section>
         )}
 
@@ -679,7 +741,7 @@ function StepCard({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-3xl border border-border/60 bg-card/60 p-6 backdrop-blur sm:p-8">
+    <section className="relative rounded-3xl border border-border/60 bg-card/60 p-6 backdrop-blur sm:p-8">
       <div className="mb-5 flex items-start gap-4">
         <span className="pt-1 font-mono text-xs tracking-[0.2em] text-primary">{step}</span>
         <div className="flex-1">
@@ -687,7 +749,7 @@ function StepCard({
             <h3 className="text-lg font-semibold tracking-tight">{title}</h3>
             {badge && <span className="rounded-full border border-border/60 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{badge}</span>}
           </div>
-          <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+          <p className="mt-1 text-sm text-muted-foreground sm:pr-32">{description}</p>
         </div>
       </div>
       <div className="space-y-5">{children}</div>
@@ -705,10 +767,16 @@ function StepNavigation({
   nextDisabled?: boolean;
 }) {
   return (
-    <div className="sticky top-[88px] z-10 flex items-center justify-between rounded-xl border border-border/60 bg-background/95 px-3 py-2 shadow-sm backdrop-blur">
+    <div className="mt-5 flex items-center justify-between border-t border-border/60 pt-4">
       <Button variant="ghost" onClick={back} disabled={!back}>Voltar</Button>
       {next && (
-        <Button onClick={next} disabled={nextDisabled} className="bg-primary text-primary-foreground hover:bg-primary/90">Continuar</Button>
+        <Button
+          onClick={next}
+          disabled={nextDisabled}
+          className="bg-primary text-primary-foreground hover:bg-primary/90 sm:absolute sm:right-8 sm:top-[3.25rem]"
+        >
+          Continuar
+        </Button>
       )}
     </div>
   );
@@ -739,14 +807,18 @@ function Dropzone({
     <div
       onDragOver={(event) => {
         event.preventDefault();
-        setDragOver(true);
+        if (!loading) setDragOver(true);
       }}
       onDragLeave={() => setDragOver(false)}
-      onDrop={onDrop}
-      onClick={() => inputRef.current?.click()}
-      className={`group relative flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed px-6 py-12 text-center transition-all ${
+      onDrop={(event) => {
+        event.preventDefault();
+        if (!loading) onDrop(event);
+      }}
+      onClick={() => !loading && inputRef.current?.click()}
+      aria-disabled={loading}
+      className={`group relative flex flex-col items-center justify-center rounded-2xl border border-dashed px-6 py-12 text-center transition-all ${
         dragOver ? "scale-[1.01] border-primary bg-primary/5" : "border-border/70 hover:border-primary/60 hover:bg-primary/5"
-      }`}
+      } ${loading ? "cursor-wait opacity-80" : "cursor-pointer"}`}
     >
       <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
         <Upload className="h-5 w-5" />
@@ -758,6 +830,7 @@ function Dropzone({
         type="file"
         accept={accept ?? ".xlsx,.xls"}
         multiple={multiple}
+        disabled={loading}
         className="hidden"
         onChange={(event) => {
           if (event.target.files?.length) onSelect(event.target.files);
@@ -868,11 +941,50 @@ function InfoBox({ children }: { children: React.ReactNode }) {
   return <div className="rounded-2xl border border-border/60 bg-muted/30 px-4 py-3 text-sm text-muted-foreground">{children}</div>;
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function WarningBox({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border border-border/60 bg-card px-4 py-3 text-center">
-      <p className="text-2xl font-semibold">{value}</p>
-      <p className="text-xs text-muted-foreground">{label}</p>
+    <div role="alert" className="rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-foreground">
+      <div className="mb-1 flex items-center gap-2 font-semibold text-amber-700 dark:text-amber-300">
+        <AlertTriangle className="h-4 w-4" />
+        {title}
+      </div>
+      <div className="space-y-1 text-muted-foreground">{children}</div>
+    </div>
+  );
+}
+
+function PdfProgressBar({ progress }: { progress: PdfProcessingProgress | null }) {
+  const processedPages = progress?.processedPages ?? 0;
+  const totalPages = progress?.totalPages ?? 0;
+  const percentage = totalPages > 0
+    ? Math.min(100, Math.round((processedPages / totalPages) * 100))
+    : 0;
+  const remainingPages = Math.max(0, totalPages - processedPages);
+
+  return (
+    <div className="rounded-2xl border border-primary/30 bg-primary/5 px-4 py-4">
+      <div className="mb-2 flex items-center justify-between gap-4 text-sm">
+        <span className="font-medium">Processando PDF</span>
+        <span className="font-mono text-primary">{percentage}%</span>
+      </div>
+      <div
+        role="progressbar"
+        aria-label="Progresso do processamento do PDF"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percentage}
+        className="h-2.5 overflow-hidden rounded-full bg-primary/15"
+      >
+        <div
+          className={`h-full rounded-full bg-primary transition-[width] duration-300 ${totalPages === 0 ? "w-1/4 animate-pulse" : ""}`}
+          style={totalPages > 0 ? { width: `${percentage}%` } : undefined}
+        />
+      </div>
+      <p className="mt-2 font-mono text-xs text-muted-foreground">
+        {totalPages > 0
+          ? `${processedPages} de ${totalPages} páginas · ${remainingPages} restante${remainingPages === 1 ? "" : "s"}`
+          : "Preparando o arquivo para leitura..."}
+      </p>
     </div>
   );
 }

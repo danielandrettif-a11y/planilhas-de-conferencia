@@ -41,9 +41,10 @@ function parseBrDate(value: string | undefined): Date | null {
   return date;
 }
 
-function parseBrNumber(value: string): number {
+function parseBrNumber(value: string): number | null {
+  if (!value.trim()) return null;
   const parsed = Number(value.replace(/\s/g, "").replace(/\./g, "").replace(",", "."));
-  return Number.isFinite(parsed) ? parsed : 0;
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function normalizeTitleNumber(raw: string): string {
@@ -71,7 +72,7 @@ export function parsePagamentoColumns(columns: PagamentoColumns): PagamentoRow |
 
   const valorTitulo = parseBrNumber(columns.valorTitulo);
   const valorAberto = parseBrNumber(columns.valorAberto);
-  if (!Number.isFinite(valorTitulo) || !Number.isFinite(valorAberto)) return null;
+  if (valorTitulo === null || valorAberto === null) return null;
 
   return {
     numero,

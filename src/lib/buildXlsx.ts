@@ -23,15 +23,7 @@ const ACCOUNT_NAMES: Record<string, string> = {
   "81363": "Móveis e Utensílios",
 };
 
-interface WorkbookOptions extends BuildXlsxOptions {
-  empresa?: string;
-}
-
-let currentCompanyName = "";
-
-export function setWorkbookCompanyName(value: string): void {
-  currentCompanyName = value.trim();
-}
+type WorkbookOptions = BuildXlsxOptions;
 
 function roundCurrency(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
@@ -65,11 +57,19 @@ function toJsDate(value: unknown): Date | null {
 }
 
 function sanitizeSheetName(name: string): string {
-  return name.replace(/[\[\]:*?/\\]/g, "_").slice(0, 31) || "Sheet";
+  return name.replace(/[[\]:*?/\\]/g, "_").slice(0, 31) || "Sheet";
 }
 
 function escapeSheetNameForLink(name: string): string {
   return name.replace(/'/g, "''");
+}
+
+function internalSheetLink(sheetName: string, cellAddress: string, text: string): ExcelJS.CellFormulaValue {
+  const escapedText = text.replace(/"/g, '""');
+  return {
+    formula: `HYPERLINK("#'${escapeSheetNameForLink(sheetName)}'!${cellAddress}","${escapedText}")`,
+    result: text,
+  };
 }
 
 function accountCode(conta: string): string {
@@ -89,6 +89,8 @@ function accountDisplayName(conta: string): string {
 function accountSort(a: SheetInput, b: SheetInput): number {
   const aCode = accountCode(a.conta);
   const bCode = accountCode(b.conta);
+  if (aCode === "81362" && bCode !== "81362") return 1;
+  if (bCode === "81362" && aCode !== "81362") return -1;
   const aNumeric = /^\d+$/.test(aCode);
   const bNumeric = /^\d+$/.test(bCode);
   if (aNumeric && bNumeric) return Number(aCode) - Number(bCode);
@@ -101,12 +103,12 @@ function accountBalance(result: TransformResult): number {
   return roundCurrency(result.notas.reduce((sum, nota) => sum + nota.faltaPagar, 0));
 }
 
-function thinBorder() {
+function thinBorder(color = "FFD1D5DB") {
   return {
-    top: { style: "thin" as const, color: { argb: "FFD1D5DB" } },
-    left: { style: "thin" as const, color: { argb: "FFD1D5DB" } },
-    bottom: { style: "thin" as const, color: { argb: "FFD1D5DB" } },
-    right: { style: "thin" as const, color: { argb: "FFD1D5DB" } },
+    top: { style: "thin" as const, color: { argb: color } },
+    left: { style: "thin" as const, color: { argb: color } },
+    bottom: { style: "thin" as const, color: { argb: color } },
+    right: { style: "thin" as const, color: { argb: color } },
   };
 }
 
@@ -122,15 +124,13 @@ function populateAccountSheet(
     { key: "valor", width: 18 },
     { key: "falta", width: 18 },
     { key: "info", width: 60 },
+    { key: "confianca", width: 24 },
     { key: "motivo", width: 65 },
   ];
 
-  ws.mergeCells("A1:G1");
+  ws.mergeCells("A1:H1");
   const backCell = ws.getCell("A1");
-  backCell.value = {
-    text: `← Voltar para Geral  |  ${displayName}`,
-    hyperlink: "#'Geral'!D1",
-  };
+  backCell.value = internalSheetLink("Geral", "D1", `← Voltar para Geral  |  ${displayName}`);
   backCell.font = { bold: true, color: { argb: "FF1D4ED8" }, underline: true };
   backCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEFF6FF" } };
   backCell.alignment = { vertical: "middle", horizontal: "left" };
@@ -144,6 +144,7 @@ function populateAccountSheet(
     "VALOR DA NF",
     "FALTA PAGAR",
     "INFORMAÇÕES",
+    "CONFIANÇA DA ASSOCIAÇÃO",
     "MOTIVO DA CONFERÊNCIA",
   ];
   header.height = 24;
@@ -162,6 +163,7 @@ function populateAccountSheet(
       valor: nota.valorNF,
       falta: nota.faltaPagar,
       info: nota.informacoes,
+      confianca: nota.confiancaAssociacao,
       motivo: nota.motivosConferencia.join("\n"),
     });
   }
@@ -182,17 +184,27 @@ function populateAccountSheet(
     row.eachCell({ includeEmpty: true }, (cell, col) => {
       cell.alignment = {
         vertical: "middle",
-        horizontal: col === 2 || col === 6 || col === 7 ? "left" : "center",
-        wrapText: col === 2 || col === 6 || col === 7,
+        horizontal: col === 2 || col === 6 || col === 8 ? "left" : "center",
+        wrapText: col === 2 || col === 6 || col === 7 || col === 8,
       };
       cell.fill = {
         type: "pattern",
         pattern: "solid",
         fgColor: {
-          argb: isTotal ? "FFE5E7EB" : col === 7 && cell.value ? "FFFFF4CC" : "FFF8FAFC",
+          argb: isTotal ? "FFE5E7EB" : col === 8 && cell.value ? "FFFFF4CC" : "FFF8FAFC",
         },
       };
       if (isTotal) cell.font = { bold: true };
+      if (!isTotal && col === 7) {
+        const confidence = String(cell.value ?? "Manual");
+        const colors = confidence === "Alta"
+          ? { fill: "FFDCFCE7", font: "FF166534" }
+          : confidence === "Média"
+            ? { fill: "FFFEF3C7", font: "FF92400E" }
+            : { fill: "FFFEE2E2", font: "FFB91C1C" };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: colors.fill } };
+        cell.font = { bold: true, color: { argb: colors.font } };
+      }
       if (col === 1) cell.numFmt = "dd/mm/yyyy";
       if (col === 4 || col === 5) {
         cell.numFmt = '"R$" #,##0.00;[Red]-"R$" #,##0.00';
@@ -202,9 +214,9 @@ function populateAccountSheet(
   }
 
   if (totalRowNumber > 3) {
-    ws.autoFilter = { from: "A2", to: `G${totalRowNumber - 1}` };
+    ws.autoFilter = { from: "A2", to: `H${totalRowNumber - 1}` };
   }
-  ws.views = [{ state: "frozen", ySplit: 2 }];
+  ws.views = [{ state: "normal" }];
   ws.pageSetup = {
     orientation: "landscape",
     fitToPage: true,
@@ -228,20 +240,20 @@ function populateGeneralSheet(
   entries: GeneralEntry[],
   opts: WorkbookOptions,
 ): void {
-  // Colunas vazias nas laterais centralizam visualmente a tabela em D:F.
+  // A coluna C cria o recuo visual que centraliza o resumo na tela.
   ws.columns = [
-    { width: 4 },
-    { width: 4 },
-    { width: 4 },
-    { width: 42 },
-    { width: 18 },
-    { width: 24 },
-    { width: 4 },
-    { width: 4 },
-    { width: 4 },
+    { width: 3 },
+    { width: 3 },
+    { width: 48 },
+    { width: 36 },
+    { width: 21 },
+    { width: 20 },
+    { width: 3 },
+    { width: 3 },
+    { width: 3 },
   ];
-  ws.properties.defaultRowHeight = 22;
-  ws.views = [{ state: "frozen", ySplit: 6 }];
+  ws.properties.defaultRowHeight = 20;
+  ws.views = [{ state: "normal", showGridLines: false }];
   ws.pageSetup = {
     orientation: "portrait",
     fitToPage: true,
@@ -252,15 +264,15 @@ function populateGeneralSheet(
 
   ws.mergeCells("D1:F1");
   const title = ws.getCell("D1");
-  title.value = "Resumo Geral dos Fornecedores";
-  title.font = { bold: true, size: 18, color: { argb: "FFFFFFFF" } };
+  title.value = "Resumo Geral";
+  title.font = { bold: true, size: 16, color: { argb: "FFFFFFFF" } };
   title.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F2937" } };
   title.alignment = { vertical: "middle", horizontal: "center" };
-  ws.getRow(1).height = 34;
+  ws.getRow(1).height = 28;
 
   ws.mergeCells("D2:F2");
   const companyCell = ws.getCell("D2");
-  companyCell.value = `Empresa: ${opts.empresa?.trim() || currentCompanyName || "não informada"}`;
+  companyCell.value = `Empresa: ${opts.empresa?.trim() || "não informada"}`;
   companyCell.font = { bold: true, color: { argb: "FF111827" } };
   companyCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF8FAFC" } };
   companyCell.alignment = { horizontal: "center", vertical: "middle" };
@@ -274,39 +286,33 @@ function populateGeneralSheet(
 
   ws.mergeCells("D4:F4");
   const dateCell = ws.getCell("D4");
-  dateCell.value = `Planilha gerada em: ${formatDate(opts.generatedAt ?? new Date())}`;
+  dateCell.value = `Planilha feita em: ${formatDate(opts.generatedAt ?? new Date())}`;
   dateCell.font = { italic: true, color: { argb: "FF6B7280" } };
   dateCell.alignment = { horizontal: "center", vertical: "middle" };
 
-  const headerRow = ws.getRow(6);
-  headerRow.getCell(4).value = "NOME DA CONTA";
+  const headerRow = ws.getRow(5);
+  headerRow.getCell(4).value = "NOME DA CONTA DO FORNECEDOR";
   headerRow.getCell(5).value = "NÚMERO DA CONTA";
   headerRow.getCell(6).value = "SALDO FINAL";
-  headerRow.height = 26;
+  headerRow.height = 24;
   for (let col = 4; col <= 6; col++) {
     const cell = headerRow.getCell(col);
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF374151" } };
     cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
     cell.alignment = { vertical: "middle", horizontal: "center" };
-    cell.border = thinBorder();
+    cell.border = thinBorder("FF000000");
   }
 
   entries.forEach((entry, index) => {
-    const rowNumber = 7 + index;
+    const rowNumber = 6 + index;
     const row = ws.getRow(rowNumber);
     const nameCell = row.getCell(4);
-    nameCell.value = {
-      text: entry.description,
-      hyperlink: `#'${escapeSheetNameForLink(entry.sheetName)}'!A1`,
-    };
+    nameCell.value = internalSheetLink(entry.sheetName, "A1", entry.description);
     nameCell.font = { bold: true, color: { argb: "FF1D4ED8" }, underline: true };
     nameCell.alignment = { vertical: "middle", horizontal: "left" };
 
     const codeCell = row.getCell(5);
-    codeCell.value = {
-      text: entry.code,
-      hyperlink: `#'${escapeSheetNameForLink(entry.sheetName)}'!A1`,
-    };
+    codeCell.value = internalSheetLink(entry.sheetName, "A1", entry.code);
     codeCell.font = { bold: true, color: { argb: "FF1D4ED8" }, underline: true };
     codeCell.alignment = { vertical: "middle", horizontal: "center" };
 
@@ -326,36 +332,15 @@ function populateGeneralSheet(
     for (let col = 4; col <= 6; col++) {
       const cell = row.getCell(col);
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fillColor } };
-      cell.border = thinBorder();
+      cell.border = thinBorder("FF000000");
     }
-    row.height = 27;
+    row.height = 23;
   });
 
-  const firstDataRow = 7;
+  const firstDataRow = 6;
   const lastDataRow = entries.length > 0 ? firstDataRow + entries.length - 1 : firstDataRow;
-  const totalRowNumber = entries.length > 0 ? lastDataRow + 1 : firstDataRow;
-  const totalRow = ws.getRow(totalRowNumber);
-  totalRow.getCell(4).value = "TOTAL GERAL";
-  ws.mergeCells(totalRowNumber, 4, totalRowNumber, 5);
-  const totalResult = roundCurrency(entries.reduce((sum, entry) => sum + entry.cachedBalance, 0));
-  totalRow.getCell(6).value = entries.length > 0
-    ? { formula: `SUM(F${firstDataRow}:F${lastDataRow})`, result: totalResult }
-    : 0;
-  totalRow.getCell(6).numFmt = '"R$" #,##0.00;[Red]-"R$" #,##0.00';
-  totalRow.height = 27;
-  for (let col = 4; col <= 6; col++) {
-    const cell = totalRow.getCell(col);
-    cell.font = { bold: true, color: { argb: "FF111827" } };
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFDDEAFE" } };
-    cell.alignment = {
-      vertical: "middle",
-      horizontal: col === 6 ? "right" : "center",
-    };
-    cell.border = thinBorder();
-  }
-
   if (entries.length > 0) {
-    ws.autoFilter = { from: "D6", to: `F${lastDataRow}` };
+    ws.autoFilter = { from: "D5", to: `F${lastDataRow}` };
   }
 }
 
