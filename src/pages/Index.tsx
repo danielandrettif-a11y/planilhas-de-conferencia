@@ -31,7 +31,7 @@ import {
   transformRows,
   type SheetInput,
   type SheetRow,
-} from "@/lib/transformSpreadsheet";
+} from "@/lib/transformSpreadsheetFinal";
 import type { PagamentoRow, PdfProcessingProgress } from "@/lib/parsePagamentosPdf";
 
 const ACCEPTED = [".xlsx", ".xls"];
