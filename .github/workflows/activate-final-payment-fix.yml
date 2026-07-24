@@ -1,0 +1,42 @@
+name: Activate final payment fix
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/activate-final-payment-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  activate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Activate final transformer
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/pages/Index.tsx')
+          text = path.read_text(encoding='utf-8')
+          old = '} from "@/lib/transformSpreadsheet";'
+          new = '} from "@/lib/transformSpreadsheetFinal";'
+          if text.count(old) != 1:
+              raise SystemExit(f'Import esperado encontrado {text.count(old)} vez(es)')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
+      - name: Commit activation
+        shell: bash
+        run: |
+          rm .github/workflows/activate-final-payment-fix.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/pages/Index.tsx .github/workflows/activate-final-payment-fix.yml
+          git commit -m "Usa saldo líquido e data de baixa na conferência"
+          git push
