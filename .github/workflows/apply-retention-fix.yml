@@ -1,0 +1,268 @@
+name: Apply retention comparison fix
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/apply-retention-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Apply source and test changes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source_path = Path("src/lib/transformSpreadsheet.ts")
+          source = source_path.read_text(encoding="utf-8")
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              if text.count(old) != 1:
+                  raise SystemExit(f"Marcador inesperado em {label}: encontrado {text.count(old)} vez(es)")
+              return text.replace(old, new, 1)
+
+          source = replace_once(
+              source,
+              '''  faltaPagar: number;
+  informacoes: string;''',
+              '''  faltaPagar: number;
+  /** Retenções e descontos fiscais que reduzem o valor líquido esperado no ERP. */
+  totalRetencoes?: number;
+  informacoes: string;''',
+              "interface NotaFiscal",
+          )
+
+          accounting_helpers = r'''
+interface AccountingValue {
+  value: number;
+  indicator: "D" | "C" | null;
+}
+
+const RETENTION_OR_DEDUCTION_RE = /\b(?:INSS|IRRF|ISS(?:QN)?|PIS|COFINS|CSLL|RETENCAO|IMPOSTO|ABATIMENTO|DESCONTO)\b/i;
+
+function parseAccountingValue(value: unknown): AccountingValue | null {
+  const parsed = toNumber(value);
+  if (parsed === null) return null;
+
+  const indicatorMatch = typeof value === "string"
+    ? value.trim().toUpperCase().match(/([DC])\s*$/)
+    : null;
+
+  return {
+    value: parsed,
+    indicator: indicatorMatch ? indicatorMatch[1] as "D" | "C" : null,
+  };
+}
+
+function isRetentionOrDeductionDescription(description: string): boolean {
+  return RETENTION_OR_DEDUCTION_RE.test(removeAccents(description));
+}
+
+function adjustmentValue(value: unknown, description: string): number | null {
+  const accounting = parseAccountingValue(value);
+  if (!accounting) return null;
+
+  // Valores realmente negativos continuam funcionando como antes.
+  if (accounting.value < 0) return accounting.value;
+
+  // Algumas exportações gravam o débito como texto, por exemplo "74,84D".
+  // Só convertemos esse D em abatimento quando a descrição identifica retenção/desconto.
+  if (accounting.indicator === "D" && isRetentionOrDeductionDescription(description)) {
+    return -Math.abs(accounting.value);
+  }
+
+  return null;
+}
+'''
+
+          source = replace_once(
+              source,
+              '''function removeAccents(value: string): string {''',
+              accounting_helpers + '''\nfunction removeAccents(value: string): string {''',
+              "helpers contábeis",
+          )
+
+          old_difference = '''function setPaymentDifferenceInfo(nota: NotaFiscal, paid: number): boolean {
+  const difference = roundCurrency(paid - nota.valorNF);
+  if (Math.abs(difference) < 0.01) return false;
+  if (difference < 0) {
+    nota.informacoes = `Pagou ${formatBRL(Math.abs(difference))} a menos`;
+    addReason(nota, `O valor da NF é ${formatBRL(nota.valorNF)}, mas o pagamento localizado no ERP foi de ${formatBRL(paid)}. Foram pagos ${formatBRL(Math.abs(difference))} a menos.`);
+  } else {
+    nota.faltaPagar = -difference;
+    nota.informacoes = `Pagou ${formatBRL(difference)} a mais`;
+    addReason(nota, `O valor da NF é ${formatBRL(nota.valorNF)}, mas o pagamento localizado no ERP foi de ${formatBRL(paid)}. Foram pagos ${formatBRL(difference)} a mais.`);
+  }
+  return true;
+}'''
+
+          new_difference = '''function setPaymentDifferenceInfo(nota: NotaFiscal, paid: number): boolean {
+  const totalRetencoes = roundCurrency(nota.totalRetencoes ?? 0);
+  const expectedPayment = roundCurrency(Math.max(0, nota.valorNF - totalRetencoes));
+  const difference = roundCurrency(paid - expectedPayment);
+  if (Math.abs(difference) < 0.01) return false;
+
+  const comparisonReason = totalRetencoes > MONEY_TOLERANCE
+    ? `O valor bruto da NF é ${formatBRL(nota.valorNF)}, com ${formatBRL(totalRetencoes)} de retenções/abatimentos. O valor líquido esperado no ERP é ${formatBRL(expectedPayment)}, mas o pagamento localizado foi de ${formatBRL(paid)}.`
+    : `O valor da NF é ${formatBRL(nota.valorNF)}, mas o pagamento localizado no ERP foi de ${formatBRL(paid)}.`;
+
+  if (difference < 0) {
+    nota.informacoes = `Pagou ${formatBRL(Math.abs(difference))} a menos`;
+    addReason(nota, `${comparisonReason} Foram pagos ${formatBRL(Math.abs(difference))} a menos.`);
+  } else {
+    nota.faltaPagar = -difference;
+    nota.informacoes = `Pagou ${formatBRL(difference)} a mais`;
+    addReason(nota, `${comparisonReason} Foram pagos ${formatBRL(difference)} a mais.`);
+  }
+  return true;
+}'''
+
+          source = replace_once(source, old_difference, new_difference, "comparação do pagamento")
+
+          source = replace_once(
+              source,
+              '''      faltaPagar: Math.abs(rawValue),
+      informacoes: "",''',
+              '''      faltaPagar: Math.abs(rawValue),
+      totalRetencoes: 0,
+      informacoes: "",''',
+              "criação da NF",
+          )
+
+          old_adjustments = '''  const appliedRows = new Set<number>();
+  rows.forEach((row, index) => {
+    const desc = String(row[histKey] ?? "");
+    const value = toNumber(row[valorKey]);
+    if (!desc.trim() || value === null || value >= 0 || appliedRows.has(index)) return;
+    const parsed = parseDescricao(desc);
+    const numbers = parsed.numero ? [parsed.numero] : extractCandidateNumbers(desc);
+    const known = [...new Set(numbers.filter((number) => taxCandidates(number, byNumero).length > 0))];
+    let target: NotaFiscal | null = null;
+    if (known.length === 1) target = chooseTaxTarget(known[0], desc, byNumero);
+    else if (known.length > 1) {
+      const possibilities = known.flatMap((number) => taxCandidates(number, byNumero).map((nota) => ({ nota, score: supplierScore(desc, nota.fornecedor) })));
+      possibilities.sort((a, b) => b.score - a.score);
+      if (possibilities[0]?.score > 0 && possibilities[0].score > (possibilities[1]?.score ?? -1)) target = possibilities[0].nota;
+    }
+    if (!target) return;
+    target.faltaPagar += value;
+    appliedRows.add(index);
+  });'''
+
+          new_adjustments = '''  const appliedRows = new Set<number>();
+  rows.forEach((row, index) => {
+    const desc = String(row[histKey] ?? "");
+    const adjustment = adjustmentValue(row[valorKey], desc);
+    if (!desc.trim() || adjustment === null || appliedRows.has(index)) return;
+    const parsed = parseDescricao(desc);
+    const numbers = parsed.numero ? [parsed.numero] : extractCandidateNumbers(desc);
+    const known = [...new Set(numbers.filter((number) => taxCandidates(number, byNumero).length > 0))];
+    let target: NotaFiscal | null = null;
+    if (known.length === 1) target = chooseTaxTarget(known[0], desc, byNumero);
+    else if (known.length > 1) {
+      const possibilities = known.flatMap((number) => taxCandidates(number, byNumero).map((nota) => ({ nota, score: supplierScore(desc, nota.fornecedor) })));
+      possibilities.sort((a, b) => b.score - a.score);
+      if (possibilities[0]?.score > 0 && possibilities[0].score > (possibilities[1]?.score ?? -1)) target = possibilities[0].nota;
+    }
+    if (!target) return;
+
+    target.faltaPagar = roundCurrency(target.faltaPagar + adjustment);
+    if (adjustment < 0 && isRetentionOrDeductionDescription(desc)) {
+      target.totalRetencoes = roundCurrency((target.totalRetencoes ?? 0) + Math.abs(adjustment));
+    }
+    appliedRows.add(index);
+  });'''
+
+          source = replace_once(source, old_adjustments, new_adjustments, "aplicação de abatimentos")
+          source_path.write_text(source, encoding="utf-8")
+
+          test_path = Path("src/lib/transformSpreadsheet.test.ts")
+          tests = test_path.read_text(encoding="utf-8")
+          marker = '''  it("não associa uma NF abreviada quando o mesmo final é ambíguo", () => {'''
+          if tests.count(marker) != 1:
+              raise SystemExit(f"Marcador dos testes encontrado {tests.count(marker)} vez(es)")
+
+          new_tests = r'''  it("desconta INSS textual com sufixo D e registra a retenção", () => {
+    const result = transformRows([
+      {
+        "Descrição histórico": "VALOR NF - 9705-BIOVEP CONTROLE DE VETORES E PRAGAS LTDA",
+        Valor: "680,37C",
+        Data: date(30, 4),
+      },
+      {
+        "Descrição histórico": "VALOR INSS DE TERCEIROS S/ NF - 9705-BIOVEP CONTROLE DE VETORES E PRAGAS LTDA",
+        Valor: "74,84D",
+        Data: date(30, 4),
+      },
+    ]);
+
+    expect(result.notas[0].valorNF).toBe(680.37);
+    expect(result.notas[0].faltaPagar).toBe(605.53);
+    expect(result.notas[0].totalRetencoes).toBe(74.84);
+  });
+
+  it("compara o ERP com o valor líquido depois das retenções", () => {
+    const result = transformRows([
+      {
+        "Descrição histórico": "VALOR NF - 9705-BIOVEP CONTROLE DE VETORES E PRAGAS LTDA",
+        Valor: 680.37,
+        Data: date(30, 4),
+      },
+      {
+        "Descrição histórico": "VALOR INSS DE TERCEIROS S/ NF - 9705-BIOVEP CONTROLE DE VETORES E PRAGAS LTDA",
+        Valor: -74.84,
+        Data: date(30, 4),
+      },
+    ]);
+    const current = result.notas[0];
+
+    applyPagamentosPdf(
+      [current],
+      [pagamento("9705", date(30, 5), 605.53, date(30, 5), "BIOVEP CONTROLE DE VETORES E PRAGAS LTDA")],
+      { mesConferencia: { ano: 2026, mes: 5 }, generatedAt: date(22, 7) },
+    );
+
+    expect(current.informacoes).not.toContain("Pagou R$ 74,84 a menos");
+    expect(current.informacoes).toContain("ERP indica pagamento integral");
+    expect(current.motivosConferencia.join(" ")).not.toContain("Foram pagos R$ 74,84 a menos");
+  });
+
+'''
+          tests = tests.replace(marker, new_tests + marker, 1)
+          test_path.write_text(tests, encoding="utf-8")
+          PY
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Commit correction
+        shell: bash
+        run: |
+          rm .github/workflows/apply-retention-fix.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/lib/transformSpreadsheet.ts src/lib/transformSpreadsheet.test.ts .github/workflows/apply-retention-fix.yml
+          git commit -m "Corrige retenções na comparação com pagamentos do ERP"
+          git push
