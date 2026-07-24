@@ -1,0 +1,51 @@
+name: Apply safe reconciliation v2
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/apply-safe-reconciliation-v2.yml
+      - scripts/apply-safe-reconciliation-v2.py
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Apply patch
+        run: python3 scripts/apply-safe-reconciliation-v2.py
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Commit validated correction
+        shell: bash
+        run: |
+          rm .github/workflows/apply-safe-reconciliation-v2.yml
+          rm scripts/apply-safe-reconciliation-v2.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/lib/transformSpreadsheet.ts src/lib/transformSpreadsheet.test.ts .github/workflows/apply-safe-reconciliation-v2.yml scripts/apply-safe-reconciliation-v2.py
+          git commit -m "Corrige saldo e bloqueia associações financeiras inseguras"
+          git push
