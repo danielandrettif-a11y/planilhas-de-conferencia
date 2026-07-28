@@ -121,9 +121,6 @@ function parseAccountingValue(value: unknown): number | null {
 
 function extractReturnInvoiceNumber(description: string): string | null {
   const normalized = normalizeText(description);
-
-  // Em descrições de devolução podem existir dois números:
-  // documento da devolução e NF original. A NF original é a última NF citada.
   const invoiceReferences = [...normalized.matchAll(/\bNF\s*(?:-|N[ºO.]?\s*)?\s*(\d+)/g)]
     .map((match) => normalizeNoteNumber(match[1]))
     .filter(Boolean);
@@ -196,6 +193,10 @@ function uniqueDates(dates: Date[]): Date[] {
   ).values()].sort((a, b) => a.getTime() - b.getTime());
 }
 
+function formatDateList(dates: Date[]): string {
+  return uniqueDates(dates).map(formatDate).join(", ");
+}
+
 function formatBRL(value: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" })
     .format(roundCurrency(value))
@@ -232,11 +233,6 @@ function appendReturnMessages(notes: NotaFiscal[]): void {
   }
 }
 
-/**
- * Identifica devoluções antes que uma linha negativa iniciada por VALOR NF seja
- * descartada pelo núcleo antigo. O valor reduz o saldo da NF original e pode
- * deixar o FALTA PAGAR negativo, representando crédito com o fornecedor.
- */
 export function transformRows(rows: SheetRow[]): TransformResult {
   const result = transformRowsSafe(rows);
   const descriptionKey = findKey(rows[0], ["Descrição histórico", "Descricao historico", "DescriÃ§Ã£o histÃ³rico"]);
@@ -289,94 +285,100 @@ function paidTotal(rows: PagamentoRow[]): number {
   ));
 }
 
+function openTotal(rows: PagamentoRow[]): number {
+  return roundCurrency(rows.reduce((sum, row) => sum + row.valorAberto, 0));
+}
+
 function removeIncorrectDifferenceReasons(note: NotaFiscal): void {
   note.motivosConferencia = note.motivosConferencia.filter((reason) => {
     const normalized = reason.toLowerCase();
     return !normalized.includes("foram pagos")
       && !normalized.includes("pagamento localizado no erp foi")
-      && !normalized.includes("valor líquido esperado da nf é");
+      && !normalized.includes("valor líquido esperado da nf é")
+      && !normalized.includes("pagamento excedeu");
   });
 }
 
 /**
- * Compara o pagamento do ERP com o saldo líquido que a planilha já calculou
- * antes de ler o PDF. As devoluções permanecem no saldo e são mostradas como
- * crédito, não como pagamento a maior.
+ * O PDF é usado apenas para conferir datas, parcelas e divergências. O saldo
+ * FALTA PAGAR é sempre restaurado ao valor calculado pelos lançamentos da
+ * planilha bruta, evitando descontar o mesmo pagamento duas vezes.
  */
 export function applyPagamentosPdf(
   notes: NotaFiscal[],
   pdfRows: PagamentoRow[],
   opts: { mesConferencia: MesConferencia; generatedAt?: Date },
 ): void {
-  const expectedNetByNote = new Map<NotaFiscal, number>();
+  const accountingBalanceByNote = new Map<NotaFiscal, number>();
   const grossByNote = new Map<NotaFiscal, number>();
+  const comparisonValueByNote = new Map<NotaFiscal, number>();
 
   for (const note of notes) {
+    const accountingBalance = roundCurrency(note.faltaPagar);
     const returnTotal = roundCurrency(
       (returnEntriesByNote.get(note) ?? []).reduce((sum, entry) => sum + entry.amount, 0),
     );
-    const balanceBeforeReturns = roundCurrency(note.faltaPagar + returnTotal);
-    const expectedNet = roundCurrency(Math.max(0, balanceBeforeReturns));
+    const balanceBeforeReturns = roundCurrency(accountingBalance + returnTotal);
+    const matchingRows = paymentRowsForNote(note, pdfRows);
+    const paid = paidTotal(matchingRows);
+    const allClosed = matchingRows.length > 0 && openTotal(matchingRows) <= MONEY_TOLERANCE;
 
-    expectedNetByNote.set(note, expectedNet);
+    accountingBalanceByNote.set(note, accountingBalance);
     grossByNote.set(note, note.valorNF);
 
-    // O núcleo antigo compara com valorNF. Temporariamente fornecemos o saldo
-    // líquido anterior às devoluções; o crédito da devolução será preservado.
-    note.valorNF = expectedNet;
+    // Quando o PDF está quitado, a comparação temporária usa pagamento + saldo
+    // contábil restante. Isso impede que o núcleo subtraia o pagamento novamente.
+    const comparisonValue = allClosed && paid > MONEY_TOLERANCE
+      ? roundCurrency(paid + Math.max(0, balanceBeforeReturns))
+      : note.valorNF;
+    comparisonValueByNote.set(note, comparisonValue);
+    note.valorNF = comparisonValue;
   }
 
   try {
     applyPagamentosPdfOriginal(notes, pdfRows, opts);
   } finally {
-    for (const [note, gross] of grossByNote) note.valorNF = gross;
+    for (const note of notes) {
+      note.valorNF = grossByNote.get(note) ?? note.valorNF;
+      note.faltaPagar = accountingBalanceByNote.get(note) ?? note.faltaPagar;
+    }
   }
 
   for (const note of notes) {
-    const expectedNet = expectedNetByNote.get(note);
-    if (expectedNet === undefined) continue;
-
-    const matchingRows = paymentRowsForNote(note, pdfRows);
-    const paid = paidTotal(matchingRows);
-    const isExactPayment = matchingRows.length > 0
-      && Math.abs(paid - expectedNet) < 0.01
-      && matchingRows.every((row) => row.valorAberto <= MONEY_TOLERANCE);
-
-    if (isExactPayment) {
-      const paymentDates = uniqueDates(
-        matchingRows
-          .map((row) => row.dataBaixa)
-          .filter((date): date is Date => date !== null),
-      );
-
-      note.informacoes = paymentDates.length > 0
-        ? paymentDates.map(formatDate).join(" e ")
-        : "Pagamento integral localizado no ERP";
-      removeIncorrectDifferenceReasons(note);
-    }
+    const accountingBalance = accountingBalanceByNote.get(note);
+    if (accountingBalance === undefined) continue;
 
     const returnTotal = roundCurrency(
       (returnEntriesByNote.get(note) ?? []).reduce((sum, entry) => sum + entry.amount, 0),
     );
-    if (returnTotal > MONEY_TOLERANCE) {
-      // O saldo vindo da planilha já contém a devolução. Caso o núcleo tenha
-      // alterado o FALTA PAGAR, recompomos o crédito a partir do saldo anterior.
-      const baseAfterPdf = Math.max(0, expectedNet);
-      note.faltaPagar = roundCurrency(baseAfterPdf - returnTotal);
-      continue;
+    const balanceBeforeReturns = roundCurrency(accountingBalance + returnTotal);
+    const matchingRows = paymentRowsForNote(note, pdfRows);
+    const paid = paidTotal(matchingRows);
+    const allClosed = matchingRows.length > 0 && openTotal(matchingRows) <= MONEY_TOLERANCE;
+    const paymentDates = uniqueDates(
+      matchingRows
+        .map((row) => row.dataBaixa)
+        .filter((date): date is Date => date !== null),
+    );
+
+    if (allClosed && paid > MONEY_TOLERANCE) {
+      const datesText = paymentDates.length > 0
+        ? formatDateList(paymentDates)
+        : "sem data de baixa informada";
+
+      if (Math.abs(paid - balanceBeforeReturns) < 0.01) {
+        note.informacoes = paymentDates.length > 0
+          ? datesText
+          : "Pagamento integral localizado no ERP";
+        removeIncorrectDifferenceReasons(note);
+      } else if (Math.abs(roundCurrency(note.valorNF - paid) - balanceBeforeReturns) < 0.01) {
+        note.informacoes = `Pagamentos localizados no ERP em ${datesText}. Saldo restante: ${formatBRL(balanceBeforeReturns)}`;
+        removeIncorrectDifferenceReasons(note);
+      }
     }
 
-    const createdUnsafeNegative = expectedNet >= -MONEY_TOLERANCE
-      && note.faltaPagar < -MONEY_TOLERANCE
-      && note.confiancaAssociacao !== "Alta";
-
-    if (createdUnsafeNegative) {
-      note.faltaPagar = expectedNet;
-      note.confiancaAssociacao = "Manual";
-      note.informacoes = "Possível pagamento localizado, mas a associação financeira foi bloqueada (conferir)";
-      const reason = "A associação criaria saldo negativo sem confiança alta. Nenhum valor financeiro foi alterado.";
-      if (!note.motivosConferencia.includes(reason)) note.motivosConferencia.push(reason);
-    }
+    // Reforça a regra central: nenhuma leitura do PDF modifica o saldo contábil.
+    note.faltaPagar = accountingBalance;
   }
 
   appendReturnMessages(notes);
