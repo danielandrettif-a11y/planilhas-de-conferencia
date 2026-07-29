@@ -1,0 +1,45 @@
+name: Activate derived payment fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/lib/transformSpreadsheetFinal2.ts"
+      - ".github/workflows/activate-derived-payment-fix.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  activate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Activate new transformer
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("src/pages/Index.tsx")
+          text = path.read_text(encoding="utf-8")
+          old = 'from "@/lib/transformSpreadsheetFinal";'
+          new = 'from "@/lib/transformSpreadsheetFinal2";'
+          if old in text:
+              path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          elif new not in text:
+              raise SystemExit("Import esperado não encontrado")
+          PY
+
+      - name: Commit activation
+        run: |
+          if git diff --quiet; then
+            echo "Already active"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/pages/Index.tsx
+          git commit -m "Ativa reconhecimento de parcelas contábeis derivadas"
+          git push
