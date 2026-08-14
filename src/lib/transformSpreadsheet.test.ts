@@ -338,7 +338,10 @@ describe("arquivo Excel", () => {
   it("cria nomes contábeis e saldos ligados às abas", async () => {
     const sheets: SheetInput[] = [
       { conta: "81362", result: { notas: [nota({ faltaPagar: 167238.83 })] } },
-      { conta: "81354", result: { notas: [nota({ faltaPagar: 28458.35 })] } },
+      {
+        conta: "81354",
+        result: { notas: [nota({ faltaPagar: 28458.35, informacoes: "Programado para 30/06/2026 (conferir)" })] },
+      },
     ];
 
     const blob = await buildXlsx(sheets, {
@@ -383,9 +386,12 @@ describe("arquivo Excel", () => {
     const accountSheet = workbook.getWorksheet("81354");
     expect(accountSheet?.views[0]?.state).toBe("normal");
     expect(accountSheet?.views[0]?.ySplit).toBeUndefined();
-    expect(accountSheet?.getCell("G2").value).toBe("CONFIANÇA DA ASSOCIAÇÃO");
-    expect(accountSheet?.getCell("G3").value).toBe("Manual");
-    expect(accountSheet?.getCell("H2").value).toBe("MOTIVO DA CONFERÊNCIA");
+    expect(accountSheet?.getCell("F3").value).toBe("Programado para 30/06/2026");
+    expect(accountSheet?.getCell("G2").value).toBe("CONFERIR");
+    expect(accountSheet?.getCell("G3").value).toBe("(conferir)");
+    expect(accountSheet?.getCell("H2").value).toBe("CONFIANÇA DA ASSOCIAÇÃO");
+    expect(accountSheet?.getCell("H3").value).toBe("Manual");
+    expect(accountSheet?.getCell("I2").value).toBe("MOTIVO DA CONFERÊNCIA");
 
     const saldo = geral?.getCell("F6").value as ExcelJS.CellFormulaValue;
     expect(saldo.formula).toContain("!E4");

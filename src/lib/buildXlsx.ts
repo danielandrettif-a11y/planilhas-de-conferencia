@@ -112,6 +112,14 @@ function thinBorder(color = "FFD1D5DB") {
   };
 }
 
+function separateReviewFlag(value: string): { information: string; review: string } {
+  const needsReview = /\(conferir\)/i.test(value);
+  return {
+    information: value.replace(/\s*\(conferir\)\s*/gi, " ").trim(),
+    review: needsReview ? "(conferir)" : "",
+  };
+}
+
 function populateAccountSheet(
   ws: ExcelJS.Worksheet,
   result: TransformResult,
@@ -124,11 +132,12 @@ function populateAccountSheet(
     { key: "valor", width: 18 },
     { key: "falta", width: 18 },
     { key: "info", width: 60 },
+    { key: "conferir", width: 14 },
     { key: "confianca", width: 24 },
     { key: "motivo", width: 65 },
   ];
 
-  ws.mergeCells("A1:H1");
+  ws.mergeCells("A1:I1");
   const backCell = ws.getCell("A1");
   backCell.value = internalSheetLink("Geral", "D1", `← Voltar para Geral  |  ${displayName}`);
   backCell.font = { bold: true, color: { argb: "FF1D4ED8" }, underline: true };
@@ -144,6 +153,7 @@ function populateAccountSheet(
     "VALOR DA NF",
     "FALTA PAGAR",
     "INFORMAÇÕES",
+    "CONFERIR",
     "CONFIANÇA DA ASSOCIAÇÃO",
     "MOTIVO DA CONFERÊNCIA",
   ];
@@ -156,13 +166,15 @@ function populateAccountSheet(
   });
 
   for (const nota of result.notas) {
+    const { information, review } = separateReviewFlag(nota.informacoes);
     ws.addRow({
       data: toJsDate(nota.data) ?? nota.data ?? "",
       fornecedor: nota.fornecedor,
       nota: nota.notaFiscal,
       valor: nota.valorNF,
       falta: nota.faltaPagar,
-      info: nota.informacoes,
+      info: information,
+      conferir: review,
       confianca: nota.confiancaAssociacao,
       motivo: nota.motivosConferencia.join("\n"),
     });
@@ -184,18 +196,18 @@ function populateAccountSheet(
     row.eachCell({ includeEmpty: true }, (cell, col) => {
       cell.alignment = {
         vertical: "middle",
-        horizontal: col === 2 || col === 6 || col === 8 ? "left" : "center",
-        wrapText: col === 2 || col === 6 || col === 7 || col === 8,
+        horizontal: col === 2 || col === 6 || col === 9 ? "left" : "center",
+        wrapText: col === 2 || col === 6 || col === 8 || col === 9,
       };
       cell.fill = {
         type: "pattern",
         pattern: "solid",
         fgColor: {
-          argb: isTotal ? "FFE5E7EB" : col === 8 && cell.value ? "FFFFF4CC" : "FFF8FAFC",
+          argb: isTotal ? "FFE5E7EB" : (col === 7 || col === 9) && cell.value ? "FFFFF4CC" : "FFF8FAFC",
         },
       };
       if (isTotal) cell.font = { bold: true };
-      if (!isTotal && col === 7) {
+      if (!isTotal && col === 8) {
         const confidence = String(cell.value ?? "Manual");
         const colors = confidence === "Alta"
           ? { fill: "FFDCFCE7", font: "FF166534" }
@@ -214,7 +226,7 @@ function populateAccountSheet(
   }
 
   if (totalRowNumber > 3) {
-    ws.autoFilter = { from: "A2", to: `H${totalRowNumber - 1}` };
+    ws.autoFilter = { from: "A2", to: `I${totalRowNumber - 1}` };
   }
   ws.views = [{ state: "normal" }];
   ws.pageSetup = {
