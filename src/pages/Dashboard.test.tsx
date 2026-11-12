@@ -5,7 +5,11 @@ import Dashboard from "./Dashboard";
 describe("navegação das áreas", () => {
   it("mantém a conferência preenchida ao visitar um módulo de lançamento", () => {
     render(<Dashboard />);
+    expect(screen.getByRole("heading", { name: "O que vamos fazer hoje?" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Acessar conferências/ }));
     fireEvent.change(screen.getByLabelText("Nome da empresa"), { target: { value: "Empresa Teste" } });
+    fireEvent.click(screen.getByRole("button", { name: "Início" }));
+    expect(screen.getByRole("heading", { name: "O que vamos fazer hoje?" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Lançamento" }));
     for (const name of ["Folha de pagamento", "Férias", "Autônomo", "Faturamento"]) {
       expect(screen.getByRole("button", { name: new RegExp(name) })).toBeInTheDocument();
