@@ -190,7 +190,7 @@ describe("regras de pagamentos", () => {
       generatedAt: date(22, 7),
     });
 
-    expect(current.informacoes).toContain("Não consta no ERP até 22/07/2026");
+    expect(current.informacoes).toContain("Não localizado no relatório do ERP até 22/07/2026");
     expect(current.informacoes).not.toContain("fornecedor não corresponde");
     expect(current.confiancaAssociacao).toBe("Manual");
   });
@@ -361,7 +361,7 @@ describe("arquivo Excel", () => {
     expect(geral?.getColumn("C").width).toBe(48);
     expect(geral?.getColumn("E").width).toBe(21);
     expect(geral?.views[0]?.state).toBe("normal");
-    expect(geral?.views[0]?.ySplit).toBeUndefined();
+    expect(geral?.views[0]).not.toHaveProperty("ySplit");
     expect(geral?.views[0]?.showGridLines).toBe(false);
     expect(geral?.getCell("D1").value).toBe("Resumo Geral");
     expect(geral?.getCell("D2").value).toBe("Empresa: Instituto de Medicina Nuclear");
@@ -385,7 +385,7 @@ describe("arquivo Excel", () => {
 
     const accountSheet = workbook.getWorksheet("81354");
     expect(accountSheet?.views[0]?.state).toBe("normal");
-    expect(accountSheet?.views[0]?.ySplit).toBeUndefined();
+    expect(accountSheet?.views[0]).not.toHaveProperty("ySplit");
     expect(accountSheet?.getCell("F3").value).toBe("Programado para 30/06/2026");
     expect(accountSheet?.getCell("G2").value).toBe("CONFERIR");
     expect(accountSheet?.getCell("G3").value).toBe("(conferir)");
@@ -444,3 +444,4 @@ describe("arquivo Excel", () => {
       .toBe("Mês de conferência: não informado");
   });
 });
+

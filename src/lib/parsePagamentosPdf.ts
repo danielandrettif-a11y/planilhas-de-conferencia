@@ -22,6 +22,11 @@ export interface PagamentosPdfResult {
   rows: PagamentoRow[];
   pages: number;
   uniqueTitles: number;
+  paginasSemTitulos: number[];
+  linhasSuspeitas: number;
+  paginasComLinhasSuspeitas: number[];
+  totalTitulos: number;
+  totalEmAberto: number;
 }
 
 export interface PdfProcessingProgress {
@@ -109,6 +114,9 @@ export async function parsePagamentosPdfDetailed(
   const buffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
   const rows: PagamentoRow[] = [];
+  const paginasSemTitulos: number[] = [];
+  let linhasSuspeitas = 0;
+  const paginasComLinhasSuspeitas = new Set<number>();
   onProgress?.({ processedPages: 0, totalPages: pdf.numPages });
 
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
@@ -122,10 +130,24 @@ export async function parsePagamentosPdfDetailed(
       items.push({ str: item.str, x: item.transform[4], y: item.transform[5], w: item.width ?? 0 });
     }
 
+    let reconhecidasNaPagina = 0;
     for (const line of groupByLine(items)) {
       const row = parsePositionedLine(line, viewport.width) ?? parsePagamentoLine(joinLine(line));
-      if (row) rows.push(row);
+      if (row) {
+        rows.push(row);
+        reconhecidasNaPagina++;
+      } else {
+        const text = joinLine(line);
+        // Uma linha com título, data e valores pode ser um lançamento perdido.
+        // Totais e cabeçalhos não são títulos; não exibimos dados do arquivo.
+        if (!/\b(?:TOTAL|SUBTOTAL)\b/i.test(text) && /\d{2}\/\d{2}\/\d{4}/.test(text)
+          && /\d{1,3}(?:\.\d{3})*,\d{2}/.test(text) && /\d{3,}/.test(text)) {
+          linhasSuspeitas++;
+          paginasComLinhasSuspeitas.add(pageNumber);
+        }
+      }
     }
+    if (reconhecidasNaPagina === 0) paginasSemTitulos.push(pageNumber);
 
     onProgress?.({ processedPages: pageNumber, totalPages: pdf.numPages });
   }
@@ -137,9 +159,15 @@ export async function parsePagamentosPdfDetailed(
     console.info(`[pdf] ${pdf.numPages} página(s), ${rows.length} linha(s), ${uniqueTitles} título(s) único(s)`);
   }
 
-  return { rows, pages: pdf.numPages, uniqueTitles };
+  return {
+    rows, pages: pdf.numPages, uniqueTitles, paginasSemTitulos, linhasSuspeitas,
+    paginasComLinhasSuspeitas: [...paginasComLinhasSuspeitas],
+    totalTitulos: rows.reduce((sum, row) => sum + row.valorTitulo, 0),
+    totalEmAberto: rows.reduce((sum, row) => sum + row.valorAberto, 0),
+  };
 }
 
 export async function parsePagamentosPdf(file: File): Promise<PagamentoRow[]> {
   return (await parsePagamentosPdfDetailed(file)).rows;
 }
+
