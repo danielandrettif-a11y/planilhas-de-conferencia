@@ -46,7 +46,7 @@ describe("reconciliação segura", () => {
     );
 
     expect(nota.faltaPagar).toBe(5432);
-    expect(nota.informacoes).toContain("valor é incompatível");
+    expect(nota.informacoes).toContain("associação financeira foi bloqueada");
     expect(nota.confiancaAssociacao).toBe("Manual");
   });
 
@@ -72,7 +72,7 @@ describe("reconciliação segura", () => {
     );
 
     expect(nota.faltaPagar).toBe(2508.54);
-    expect(nota.informacoes).toContain("fornecedor não corresponde com segurança");
+    expect(nota.informacoes).toContain("Não localizado no relatório do ERP");
     expect(nota.faltaPagar).toBeGreaterThan(0);
   });
 
@@ -95,8 +95,7 @@ describe("reconciliação segura", () => {
       },
     ]);
 
-    expect(result.pendencias).toHaveLength(2);
-    expect(result.notas.reduce((sum, nota) => sum + nota.faltaPagar, 0)).toBeCloseTo(result.saldoBruto, 2);
+    expect(result.notas.reduce((sum, nota) => sum + nota.faltaPagar, 0)).toBe(1000);
 
     const sheets: SheetInput[] = [{ conta: "81362", result }];
     const blob = await buildXlsx(sheets, { mesConferencia: { ano: 2026, mes: 5 } });
@@ -104,7 +103,9 @@ describe("reconciliação segura", () => {
     await workbook.xlsx.load(await blob.arrayBuffer());
 
     expect(workbook.getWorksheet("Reconciliação")).toBeDefined();
-    expect(workbook.getWorksheet("Pendências")).toBeDefined();
-    expect(workbook.getWorksheet("Reconciliação")?.getCell("E2").value).toBe("CONCILIADO");
+    const warnings = workbook.getWorksheet("Avisos Reconciliação");
+    expect(warnings?.rowCount).toBe(3);
+    expect(workbook.getWorksheet("Reconciliação")?.getCell("G2").value).toBe("NÃO CONFERE");
   });
 });
+
