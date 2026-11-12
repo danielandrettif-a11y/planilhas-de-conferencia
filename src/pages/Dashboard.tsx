@@ -1,48 +1,100 @@
-import { FileSpreadsheet, Loader2, ReceiptText } from "lucide-react";
+import { useState } from "react";
+import {
+  ArrowLeft, ArrowUpRight, CalendarDays, ClipboardCheck, FileSpreadsheet,
+  FileText, HardHat, ReceiptText, WalletCards,
+} from "lucide-react";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import Index from "./Index";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-const Dashboard = () => (
-  <Tabs defaultValue="conferencia" className="min-h-screen">
-    <div className="sticky top-0 z-30 border-b border-border/60 bg-background/90 backdrop-blur-xl">
-      <div className="container mx-auto flex justify-center px-4 py-3">
-        <TabsList className="grid h-auto w-full max-w-2xl grid-cols-2 gap-1 p-1">
-          <TabsTrigger value="conferencia" className="gap-2 py-2.5">
-            <FileSpreadsheet className="h-4 w-4" />
-            Conferência de Planilhas
-          </TabsTrigger>
-          <TabsTrigger value="faturamento" className="gap-2 py-2.5">
-            <ReceiptText className="h-4 w-4" />
-            Faturamento Simplificado
-          </TabsTrigger>
-        </TabsList>
-      </div>
+type Area = "conferencias" | "lancamento";
+type ModuleId = "folha" | "ferias" | "autonomo" | "faturamento";
+
+const modules = [
+  { id: "folha", title: "Folha de pagamento", description: "Organize os lançamentos da folha de pagamento.", icon: WalletCards },
+  { id: "ferias", title: "Férias", description: "Prepare os lançamentos relacionados às férias.", icon: CalendarDays },
+  { id: "autonomo", title: "Autônomo", description: "Organize os lançamentos de profissionais autônomos.", icon: HardHat },
+  { id: "faturamento", title: "Faturamento", description: "Prepare os lançamentos de faturamento.", icon: ReceiptText },
+] as const;
+
+const Dashboard = () => {
+  const [area, setArea] = useState<Area>("conferencias");
+  const [selected, setSelected] = useState<ModuleId | null>(null);
+  const selectedModule = modules.find((module) => module.id === selected);
+
+  const changeArea = (next: Area) => {
+    setArea(next);
+    setSelected(null);
+  };
+
+  return (
+    <div className="min-h-screen">
+      <header className="border-b border-border/70 bg-background/95">
+        <div className="container mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-4 py-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+              <FileSpreadsheet className="h-5 w-5" aria-hidden="true" />
+            </div>
+            <div>
+              <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Área de trabalho</p>
+              <p className="text-base font-semibold tracking-tight">Planilhas e lançamentos</p>
+            </div>
+          </div>
+          <ThemeToggle />
+          <nav aria-label="Áreas do sistema" className="order-last flex w-full gap-1 rounded-xl bg-muted p-1 sm:order-none sm:ml-auto sm:w-auto">
+            <button type="button" aria-current={area === "conferencias" ? "page" : undefined} onClick={() => changeArea("conferencias")} className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors sm:flex-none ${area === "conferencias" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
+              <ClipboardCheck className="h-4 w-4" aria-hidden="true" /> Conferências
+            </button>
+            <button type="button" aria-current={area === "lancamento" ? "page" : undefined} onClick={() => changeArea("lancamento")} className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors sm:flex-none ${area === "lancamento" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
+              <FileText className="h-4 w-4" aria-hidden="true" /> Lançamento
+            </button>
+          </nav>
+        </div>
+      </header>
+
+      {/* Mantém os arquivos e a etapa da conferência ao alternar entre as áreas. */}
+      <div hidden={area !== "conferencias"}><Index /></div>
+
+      {area === "lancamento" && (
+        <main className="container mx-auto max-w-6xl px-4 py-10 sm:py-16">
+          {selectedModule ? (
+            <section className="mx-auto max-w-3xl">
+              <button type="button" onClick={() => setSelected(null)} className="mb-8 inline-flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground">
+                <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Voltar para Lançamento
+              </button>
+              <div className="rounded-3xl border border-border bg-card p-8 shadow-[var(--shadow-soft)] sm:p-12">
+                <div className="mb-6 inline-flex rounded-2xl bg-primary/10 p-4 text-primary"><selectedModule.icon className="h-7 w-7" aria-hidden="true" /></div>
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">Lançamento</p>
+                <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">{selectedModule.title}</h1>
+                <p className="mt-4 max-w-xl text-muted-foreground">{selectedModule.description}</p>
+                <div className="mt-8 rounded-2xl border border-border bg-muted/50 p-5">
+                  <p className="font-medium">Em desenvolvimento</p>
+                  <p className="mt-1 text-sm text-muted-foreground">Esta funcionalidade será construída em uma próxima etapa.</p>
+                </div>
+              </div>
+            </section>
+          ) : (
+            <section>
+              <div className="max-w-2xl">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Área de lançamento</p>
+                <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">O que vamos lançar?</h1>
+                <p className="mt-3 text-muted-foreground">Escolha uma área para acessar suas funcionalidades de lançamento.</p>
+              </div>
+              <div className="mt-9 grid gap-4 sm:grid-cols-2">
+                {modules.map((module) => (
+                  <button key={module.id} type="button" onClick={() => setSelected(module.id)} className="group flex min-h-44 flex-col items-start rounded-2xl border border-border bg-card p-6 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-[var(--shadow-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                    <span className="flex w-full items-start justify-between"><span className="rounded-xl bg-primary/10 p-3 text-primary"><module.icon className="h-5 w-5" aria-hidden="true" /></span><ArrowUpRight className="h-5 w-5 text-muted-foreground transition-colors group-hover:text-primary" aria-hidden="true" /></span>
+                    <span className="mt-5 text-lg font-semibold">{module.title}</span>
+                    <span className="mt-1 text-sm text-muted-foreground">{module.description}</span>
+                    <span className="mt-4 text-xs font-medium text-muted-foreground">Em desenvolvimento</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+        </main>
+      )}
     </div>
-
-    <TabsContent value="conferencia" className="mt-0">
-      <Index />
-    </TabsContent>
-
-    <TabsContent value="faturamento" className="mt-0">
-      <main className="container mx-auto flex min-h-[calc(100vh-72px)] max-w-6xl items-center justify-center px-4 py-14">
-        <section className="w-full rounded-3xl border-2 border-primary/40 bg-primary/5 px-6 py-16 text-center shadow-[var(--shadow-glow)] backdrop-blur-xl sm:px-12 sm:py-20">
-          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-            <ReceiptText className="h-8 w-8" />
-          </div>
-          <p className="font-mono text-sm font-semibold uppercase tracking-[0.3em] text-muted-foreground">
-            Faturamento Simplificado
-          </p>
-          <h1 className="mx-auto mt-6 max-w-5xl text-4xl font-black uppercase leading-tight tracking-tight text-primary sm:text-6xl lg:text-7xl">
-            CALMA VICTORYA, JA VAI FICAR PRONTO!!!
-          </h1>
-          <div className="mt-6 inline-flex items-center gap-2 rounded-full border border-border/60 bg-muted/40 px-4 py-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            Funcionalidade em desenvolvimento
-          </div>
-        </section>
-      </main>
-    </TabsContent>
-  </Tabs>
-);
+  );
+};
 
 export default Dashboard;
