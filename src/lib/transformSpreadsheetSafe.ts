@@ -235,8 +235,8 @@ function collectMeta(rows: SheetRow[], result: TransformResult): ReconciliationM
   return { rawByYear, rawByMonth, warnings };
 }
 
-export function transformRows(rows: SheetRow[]): TransformResult {
-  const result = transformRowsOriginal(rows);
+export function transformRows(rows: SheetRow[], options: { skipReturns?: boolean } = {}): TransformResult {
+  const result = transformRowsOriginal(rows, options);
   metaByResult.set(result, collectMeta(rows, result));
   return result;
 }
@@ -422,3 +422,4 @@ export async function buildXlsx(
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });
 }
+
