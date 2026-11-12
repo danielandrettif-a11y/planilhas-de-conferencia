@@ -52,6 +52,7 @@ function toNumber(value: unknown): number | null {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
   if (value == null || String(value).trim() === "") return null;
 
+  const indicator = String(value).trim().match(/([DC])\s*$/i)?.[1]?.toUpperCase();
   const cleaned = String(value)
     .trim()
     .replace(/\s/g, "")
@@ -75,7 +76,8 @@ function toNumber(value: unknown): number | null {
   }
 
   const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? parsed : null;
+  if (!Number.isFinite(parsed)) return null;
+  return indicator === "D" ? -Math.abs(parsed) : indicator === "C" ? Math.abs(parsed) : parsed;
 }
 
 function removeAccents(value: string): string {
@@ -96,6 +98,7 @@ const STOP_WORDS = new Set([
   "ltda", "me", "epp", "eireli", "sa", "cia", "mei",
   "comercio", "comercial", "servico", "servicos", "industria", "industrial",
   "empresa", "produtos", "produto", "fornecedores", "fornecedor",
+  "medico", "medica", "hospitalar", "hospitalares", "material", "materiais",
 ]);
 
 interface NormalizedSupplier {
@@ -278,7 +281,7 @@ function isAutomaticPaymentInfo(value: string): boolean {
 }
 
 function wasMissingInErp(value: string): boolean {
-  return /n[aã]o\s+(?:consta|aparece)\s+no\s+erp/i.test(value);
+  return /n[aã]o\s+(?:(?:consta|aparece)\s+no\s+erp|localizado\s+no\s+relat[oó]rio\s+do\s+erp)/i.test(value);
 }
 
 function roundCurrency(value: number): number {
@@ -517,7 +520,7 @@ function addSelectionReason(nota: NotaFiscal, selection: PaymentSelection, rows:
 
 function setSelectionFailureInfo(nota: NotaFiscal, failure: SelectionFailure | null, generatedDate: string): void {
   if (failure === "supplier-not-found") {
-    nota.informacoes = `Não consta no ERP até ${generatedDate}`;
+    nota.informacoes = `Não localizado no relatório do ERP até ${generatedDate}`;
     addReason(nota, "O número da NF apareceu no relatório somente associado a fornecedores sem nenhuma palavra relevante em comum; por segurança, foi tratado como não localizado.");
   } else if (failure === "supplier-ambiguous") {
     nota.informacoes = "NF localizada para mais de um fornecedor possível";
@@ -526,7 +529,7 @@ function setSelectionFailureInfo(nota: NotaFiscal, failure: SelectionFailure | n
     nota.informacoes = "Mais de um grupo de títulos possível no ERP";
     addReason(nota, "Foram localizados múltiplos grupos compatíveis e não foi possível escolher um deles com segurança.");
   } else {
-    nota.informacoes = `Não consta no ERP até ${generatedDate}`;
+    nota.informacoes = `Não localizado no relatório do ERP até ${generatedDate}`;
     addReason(nota, `Nenhum título correspondente a esta NF e fornecedor foi localizado no relatório do ERP processado em ${generatedDate}.`);
   }
   markConferir(nota);
@@ -537,6 +540,13 @@ function uniquePayments(rows: NormalizedPayment[]): NormalizedPayment[] {
     `${row.numeroNorm}|${normalizeSupplier(row.fornecedor).full}|${row.valorTitulo}|${row.valorAberto}|${row.dataProgramada ? dateKey(row.dataProgramada) : ""}|${row.dataBaixa ? dateKey(row.dataBaixa) : ""}`,
     row,
   ])).values()];
+}
+
+/** Reutiliza exatamente a mesma seleção de fornecedor e títulos da conferência. */
+export function selectedPaymentsForInvoice(nota: NotaFiscal, rows: PagamentoRow[]): PagamentoRow[] {
+  const normalized = rows.map((row) => ({ ...row, numeroNorm: normNota(row.numero) }));
+  const selection = selectPaymentsForInvoice(nota, normalized);
+  return selection.failure ? [] : uniquePayments(selection.rows);
 }
 
 function paymentTotal(rows: NormalizedPayment[], field: "valorTitulo" | "valorAberto"): number {
@@ -695,7 +705,7 @@ function chooseTaxTarget(numero: string, desc: string, byNumero: Map<string, Not
   return null;
 }
 
-export function transformRows(rows: SheetRow[]): TransformResult {
+export function transformRows(rows: SheetRow[], options: { skipReturns?: boolean } = {}): TransformResult {
   if (rows.length === 0) throw new Error("Planilha vazia.");
   const histKey = findKey(rows[0], HIST_KEYS);
   const valorKey = findKey(rows[0], VALOR_KEYS);
@@ -734,6 +744,7 @@ export function transformRows(rows: SheetRow[]): TransformResult {
   rows.forEach((row, index) => {
     const desc = String(row[histKey] ?? "");
     const value = toNumber(row[valorKey]);
+    if (options.skipReturns && /DEVOLU[CÇ][AÃ]O/i.test(desc)) return;
     if (!desc.trim() || value === null || value >= 0 || appliedRows.has(index)) return;
     const parsed = parseDescricao(desc);
     const numbers = parsed.numero ? [parsed.numero] : extractCandidateNumbers(desc);
@@ -799,3 +810,4 @@ export async function buildXlsx(input: TransformResult | SheetInput[], options: 
     empresa: options.empresa,
   });
 }
+
