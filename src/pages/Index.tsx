@@ -21,7 +21,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "@/hooks/use-toast";
-import { ThemeToggle } from "@/components/ThemeToggle";
 import {
   applyPagamentosPdf,
   applyPreviousInfo,
@@ -456,7 +455,7 @@ const Index = () => {
 
   return (
     <div className="min-h-screen">
-      <header className="sticky top-0 z-20 border-b border-border/60 bg-background/80 backdrop-blur-xl">
+      <header className="border-b border-border/60 bg-background/80">
         <div className="container mx-auto flex items-center justify-between py-5">
           <div className="flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-[var(--shadow-glow)]">
@@ -469,7 +468,6 @@ const Index = () => {
           </div>
           <div className="flex items-center gap-3">
             <span className="hidden text-xs text-muted-foreground sm:block">processamento local</span>
-            <ThemeToggle />
           </div>
         </div>
       </header>
