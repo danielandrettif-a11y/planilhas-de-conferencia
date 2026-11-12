@@ -170,6 +170,7 @@ const Index = () => {
 
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [pdfRows, setPdfRows] = useState<PagamentoRow[]>([]);
+  const [pdfAviso, setPdfAviso] = useState("");
   const [pdfProgress, setPdfProgress] = useState<PdfProcessingProgress | null>(null);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [pdfDragOver, setPdfDragOver] = useState(false);
@@ -206,6 +207,7 @@ const Index = () => {
   const resetPdf = () => {
     setPdfFile(null);
     setPdfRows([]);
+    setPdfAviso("");
     setPdfProgress(null);
     if (pdfInputRef.current) pdfInputRef.current.value = "";
   };
@@ -306,10 +308,21 @@ const Index = () => {
         try {
           const buffer = await file.arrayBuffer();
           const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
-          const firstSheet = workbook.SheetNames[0];
+          let firstSheet = workbook.SheetNames[0];
           if (!firstSheet) {
             skipped.push(`${file.name} (sem abas)`);
             continue;
+          }
+          if (workbook.SheetNames.length > 1) {
+            const choices = workbook.SheetNames.map((name, i) => `${i + 1}. ${name}`).join("\n");
+            const answer = window.prompt(`O arquivo ${file.name} tem mais de uma aba. Digite o número da aba que contém os lançamentos:\n${choices}`);
+            const selected = answer?.trim();
+            const index = selected && /^\d+$/.test(selected) ? Number(selected) - 1 : -1;
+            if (index < 0 || index >= workbook.SheetNames.length) {
+              skipped.push(`${file.name} (aba não selecionada ou inválida)`);
+              continue;
+            }
+            firstSheet = workbook.SheetNames[index];
           }
           const rows = XLSX.utils.sheet_to_json<SheetRow>(workbook.Sheets[firstSheet], {
             defval: "",
@@ -363,10 +376,15 @@ const Index = () => {
       const result = await parsePagamentosPdfDetailed(file, setPdfProgress);
       setPdfFile(file);
       setPdfRows(result.rows);
+      setPdfAviso([
+        result.linhasSuspeitas ? `${result.linhasSuspeitas} linha(s) com dados semelhantes a títulos não foram reconhecidas nas páginas: ${result.paginasComLinhasSuspeitas.join(", ")}.` : "",
+        result.paginasSemTitulos.length ? `Nenhum título identificado nas páginas: ${result.paginasSemTitulos.join(", ")}.` : "",
+        `Totais lidos: títulos ${result.totalTitulos.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}; em aberto ${result.totalEmAberto.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}.`,
+      ].filter(Boolean).join(" "));
       setPdfSkipped(false);
       toast({
-        title: "PDF validado",
-        description: `${result.pages} página(s) · ${result.rows.length} título(s) · ${result.uniqueTitles} número(s) diferente(s).`,
+        title: "PDF processado",
+        description: `${result.pages} página(s) · ${result.rows.length} título(s) · ${result.uniqueTitles} número(s) diferente(s). Confira os totais com o relatório original.`,
       });
     } catch (error) {
       if (import.meta.env.DEV) console.error(error);
@@ -631,7 +649,7 @@ const Index = () => {
             step="05"
             title="PDF de pagamentos"
             badge="opcional"
-            description="O PDF é validado antes da geração para evitar que uma falha de leitura marque todas as NFs como ausentes no ERP."
+            description="Confira a quantidade e os valores lidos com o relatório original. A extração pode não reconhecer todos os títulos."
           >
             <div className="space-y-4">
               {!pdfSkipped ? (
@@ -668,6 +686,7 @@ const Index = () => {
               ) : (
                 <InfoBox>Sem PDF. A planilha utilizará apenas as informações herdadas do mês anterior.</InfoBox>
               )}
+              {pdfFile && <InfoBox>{pdfAviso || "Nenhuma linha suspeita foi identificada automaticamente."} Confira a quantidade e os totais com o relatório original; essa verificação não garante leitura completa.</InfoBox>}
 
               <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
                 <Checkbox
@@ -697,7 +716,7 @@ const Index = () => {
                 <SummaryRow ok={stepDone[2]} label={`Mês: ${MES_OPTIONS.find((item) => item.value === mesConferencia)?.label ?? "—"}`} />
                 <SummaryRow ok={prevFile !== null} label={prevFile ? `Mês anterior: ${Object.keys(prevSheets).length} aba(s)` : "Mês anterior: não enviado"} />
                 <SummaryRow ok={rawFiles.length > 0} label={`Planilhas brutas: ${rawFiles.length} arquivo(s)`} />
-                <SummaryRow ok={pdfFile !== null} label={pdfFile ? `PDF: ${pdfRows.length} título(s) validados` : "PDF: não enviado"} />
+                <SummaryRow ok={pdfFile !== null} label={pdfFile ? `PDF: ${pdfRows.length} título(s) lidos — confira os totais` : "PDF: não enviado"} />
               </ul>
               {(rawDuplicateWarnings.length > 0 || duplicateNfAlerts.length > 0) && (
                 <WarningBox title="Itens que exigem atenção">
@@ -990,3 +1009,4 @@ function PdfProgressBar({ progress }: { progress: PdfProcessingProgress | null }
 }
 
 export default Index;
+
