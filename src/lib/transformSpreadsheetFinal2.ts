@@ -205,3 +205,4 @@ export function transformRows(rows: SheetRow[]): TransformResult {
 
   return result;
 }
+
