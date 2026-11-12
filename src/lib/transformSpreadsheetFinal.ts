@@ -1,5 +1,6 @@
 import {
   applyPagamentosPdf as applyPagamentosPdfOriginal,
+  selectedPaymentsForInvoice,
   type MesConferencia,
   type NotaFiscal,
 } from "./transformSpreadsheet";
@@ -234,7 +235,7 @@ function appendReturnMessages(notes: NotaFiscal[]): void {
 }
 
 export function transformRows(rows: SheetRow[]): TransformResult {
-  const result = transformRowsSafe(rows);
+  const result = transformRowsSafe(rows, { skipReturns: true });
   const descriptionKey = findKey(rows[0], ["Descrição histórico", "Descricao historico", "DescriÃ§Ã£o histÃ³rico"]);
   const valueKey = findKey(rows[0], ["Valor"]);
   const dateKey = findKey(rows[0], ["Data"]);
@@ -272,12 +273,6 @@ export function transformRows(rows: SheetRow[]): TransformResult {
   return result;
 }
 
-function paymentRowsForNote(note: NotaFiscal, rows: PagamentoRow[]): PagamentoRow[] {
-  const noteNumber = normalizeNoteNumber(note.notaFiscal);
-  if (!noteNumber || noteNumber === "0") return [];
-  return rows.filter((row) => normalizeNoteNumber(row.numero) === noteNumber);
-}
-
 function paidTotal(rows: PagamentoRow[]): number {
   return roundCurrency(rows.reduce(
     (sum, row) => sum + Math.max(0, row.valorTitulo - row.valorAberto),
@@ -312,6 +307,7 @@ export function applyPagamentosPdf(
   const accountingBalanceByNote = new Map<NotaFiscal, number>();
   const grossByNote = new Map<NotaFiscal, number>();
   const comparisonValueByNote = new Map<NotaFiscal, number>();
+  const selectedByNote = new Map<NotaFiscal, PagamentoRow[]>();
 
   for (const note of notes) {
     const accountingBalance = roundCurrency(note.faltaPagar);
@@ -319,7 +315,8 @@ export function applyPagamentosPdf(
       (returnEntriesByNote.get(note) ?? []).reduce((sum, entry) => sum + entry.amount, 0),
     );
     const balanceBeforeReturns = roundCurrency(accountingBalance + returnTotal);
-    const matchingRows = paymentRowsForNote(note, pdfRows);
+    const matchingRows = selectedPaymentsForInvoice(note, pdfRows);
+    selectedByNote.set(note, matchingRows);
     const paid = paidTotal(matchingRows);
     const allClosed = matchingRows.length > 0 && openTotal(matchingRows) <= MONEY_TOLERANCE;
 
@@ -336,7 +333,10 @@ export function applyPagamentosPdf(
   }
 
   try {
-    applyPagamentosPdfOriginal(notes, pdfRows, opts);
+    for (const note of notes) {
+      const selected = selectedByNote.get(note) ?? [];
+      applyPagamentosPdfOriginal([note], selected.length ? selected : pdfRows, opts);
+    }
   } finally {
     for (const note of notes) {
       note.valorNF = grossByNote.get(note) ?? note.valorNF;
@@ -352,7 +352,7 @@ export function applyPagamentosPdf(
       (returnEntriesByNote.get(note) ?? []).reduce((sum, entry) => sum + entry.amount, 0),
     );
     const balanceBeforeReturns = roundCurrency(accountingBalance + returnTotal);
-    const matchingRows = paymentRowsForNote(note, pdfRows);
+    const matchingRows = selectedByNote.get(note) ?? [];
     const paid = paidTotal(matchingRows);
     const allClosed = matchingRows.length > 0 && openTotal(matchingRows) <= MONEY_TOLERANCE;
     const paymentDates = uniqueDates(
@@ -366,12 +366,7 @@ export function applyPagamentosPdf(
         ? formatDateList(paymentDates)
         : "sem data de baixa informada";
 
-      if (Math.abs(paid - balanceBeforeReturns) < 0.01) {
-        note.informacoes = paymentDates.length > 0
-          ? datesText
-          : "Pagamento integral localizado no ERP";
-        removeIncorrectDifferenceReasons(note);
-      } else if (Math.abs(roundCurrency(note.valorNF - paid) - balanceBeforeReturns) < 0.01) {
+      if (balanceBeforeReturns > MONEY_TOLERANCE && Math.abs(roundCurrency(note.valorNF - paid) - balanceBeforeReturns) < 0.01) {
         note.informacoes = `Pagamentos localizados no ERP em ${datesText}. Saldo restante: ${formatBRL(balanceBeforeReturns)}`;
         removeIncorrectDifferenceReasons(note);
       }
@@ -394,3 +389,4 @@ export async function buildXlsx(
   for (const sheet of sheets) appendReturnMessages(sheet.result.notas);
   return buildXlsxSafe(input, options);
 }
+
