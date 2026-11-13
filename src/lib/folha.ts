@@ -91,7 +91,9 @@ export function calcularFolha(empresa: EmpresaFolha): ResultadoFolha {
   const groups = new Map<string,{valor:number; item:[string,string,string]}>(), ignorados:EventoFolha[]=[],pendentes:EventoFolha[]=[];
   for (const e of empresa.eventos) {
     const desc=normalize(e.descricao);
-    if(e.grupo==="outros" || /FERIAS/.test(desc) || ["1018","1019","1020","1021","1034"].includes(e.clc)) { ignorados.push(e); continue; }
+    const diferencaFerias = e.clc === "1000" && /^DIFERENCA DE FERIAS\b/.test(desc);
+    const insalubridadeAbono = /^INSALUBRIDADE ABONO PEC\b/.test(desc);
+    if(e.grupo==="outros" || insalubridadeAbono || (!diferencaFerias && /FERIAS/.test(desc)) || ["1018","1019","1020","1021","1034"].includes(e.clc)) { ignorados.push(e); continue; }
     let rule=mapping[e.clc];
     if(e.clc==="1036") rule=/GOV/.test(desc)?["1239","83620","EMPRÉSTIMO CONSIGNADO GOV"]:/SANTANDER/.test(desc)?["1239","1856","EMPRÉSTIMO CONSIGNADO SANTANDER"]:undefined;
     if(!rule || (e.grupo==="desconto") !== (rule[0]==="1239")) { pendentes.push(e); continue; }
