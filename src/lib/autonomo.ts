@@ -62,14 +62,14 @@ export async function lerAutonomos(file:File, signal?:AbortSignal):Promise<Empre
   } finally {signal?.removeEventListener("abort",abort);await task.destroy();if(bytes.byteLength)bytes.fill(0);}
 }
 export interface LancamentoAutonomo {valor:number;debito:string;credito:string;historico:string}
-export function lancarAutonomos(pessoas:Autonomo[], contaIrrf:string):{lancamentos:LancamentoAutonomo[];pendencias:string[]} {
+export function lancarAutonomos(pessoas:Autonomo[]):{lancamentos:LancamentoAutonomo[];pendencias:string[]} {
   const lancamentos:LancamentoAutonomo[]=[],pendencias:string[]=[];
   for(const p of pessoas){
     if(p.outrosProventos||p.outrosDescontos||p.iss||p.pensao)pendencias.push(`Registro ${p.codigo}: há valores adicionais ou descontos sem conta definida.`);
     const base=`${p.nome} REF. ${p.competencia.slice(5)}/${p.competencia.slice(0,4)}`;
     if(p.bruto)lancamentos.push({valor:p.bruto,debito:"2083",credito:"2082",historico:`VALOR BRUTO AUTÔNOMO ${base}`});
     if(p.inss)lancamentos.push({valor:p.inss,debito:"2082",credito:"1274",historico:`INSS RETIDO AUTÔNOMO ${base}`});
-    if(p.irrf){if(!/^\d+$/.test(contaIrrf))pendencias.push(`Registro ${p.codigo}: informe a conta de crédito para o IRRF.`);else lancamentos.push({valor:p.irrf,debito:"2082",credito:contaIrrf,historico:`IRRF RETIDO AUTÔNOMO ${base}`});}
+    if(p.irrf)lancamentos.push({valor:p.irrf,debito:"2082",credito:"1162",historico:`IRRF RETIDO AUTÔNOMO ${base}`});
   }
   return {lancamentos,pendencias};
 }
