@@ -437,9 +437,18 @@ const Index = () => {
       anchor.remove();
       URL.revokeObjectURL(url);
 
+      resetPrev();
+      resetRaw();
+      resetPdf();
+      setEmpresa("");
+      setMesConferencia(defaultMes());
+      setPrevSkipped(false);
+      setPdfSkipped(false);
+      setStep(1);
+
       toast({
         title: "Planilha feita",
-        description: `${sheets.length} aba(s) · ${totalNotas} nota(s). Nenhum dado foi armazenado.`,
+        description: `${sheets.length} aba(s) · ${totalNotas} nota(s). Dados da tela limpos após o download.`,
       });
     } catch (error) {
       if (import.meta.env.DEV) console.error(error);
@@ -727,7 +736,7 @@ const Index = () => {
               <Button
                 size="lg"
                 onClick={onGenerate}
-                disabled={generating || !stepDone[1] || rawFiles.length === 0}
+                disabled={generating || loading || pdfLoading || prevLoading || !stepDone[1] || rawFiles.length === 0}
                 className="w-full bg-primary font-semibold text-primary-foreground shadow-[var(--shadow-glow)] hover:bg-primary/90 sm:w-auto"
               >
                 {generating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
