@@ -84,8 +84,15 @@ describe("limpeza de dados da folha", () => {
     expect(sheet.getCell("A2").value).toContain("Empresa Exemplo");
     expect(sheet.getCell("B5").border?.left?.style).toBe("thin");
     expect(sheet.getCell("F5").alignment?.wrapText).toBe(true);
-    expect(sheet.getCell("D5").value).toMatchObject({formula:"'planilha folha'!A3",result:100});
+    expect(sheet.getCell("D5").value).toMatchObject({formula:"'planilha folha'!A19",result:100});
     expect(sheet.getCell("D6").value).toMatchObject({formula:"D5",result:100});
+    expect(sheet.getCell("B7").value).toBeNull();
+    expect(sheet.getCell("B8").value).toBeNull();
+    const detalhes=workbook.getWorksheet("planilha folha")!;
+    expect(detalhes.getRow(1).height).toBe(90);
+    expect(detalhes.getCell("A1").alignment?.wrapText).toBe(true);
+    expect(detalhes.getCell("B18").border?.bottom?.style).toBe("thin");
+    expect(detalhes.getCell("A19").value).toMatchObject({formula:"SUM(A2:A18)",result:100});
     vi.unstubAllGlobals();
   });
 });
