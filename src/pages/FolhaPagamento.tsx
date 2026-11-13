@@ -91,9 +91,40 @@ export default function FolhaPagamento() {
         sh.addRow(["","PENDÊNCIAS PARA REVISÃO", "", "", "", "Lançamentos abaixo não compõem o total. Informe as contas e ajuste a planilha antes de importar."]);
         for (const e of calculo.pendentes) sh.addRow(["", "", "", e.valor/100, date, `REVISAR: ${e.descricao} — CLC ${e.clc || "não informado"}`]);
       }
-      sh.getColumn(4).numFmt="#,##0.00";sh.getColumn(5).numFmt="dd/mm/yyyy";
-      [12,20,16,18,16,68].forEach((n,i)=>{sh.getColumn(i+1).width=n;});
-      sh.getRow(4).font={bold:true}; sh.getRow(line).font={bold:true};
+      // Segue o modelo enviado: cabeçalhos mesclados, quadro contábil
+      // centralizado, bordas finas e históricos com quebra de linha.
+      sh.mergeCells("A1:E1");
+      sh.mergeCells("A2:E2");
+      for (const cell of ["A1", "A2", "F1", "F2"]) {
+        sh.getCell(cell).font = {name:"Arial",size:11,bold:true};
+        sh.getCell(cell).alignment = {horizontal:cell.startsWith("F") ? "right" : "center",vertical:"middle",wrapText:true};
+      }
+      sh.getRow(1).height=20;
+      sh.getRow(2).height=22;
+      sh.getRow(4).height=25.5;
+      [4,10,10,16,13,50].forEach((width,i)=>{sh.getColumn(i+1).width=width;});
+      sh.getColumn(4).numFmt="#,##0.00";
+      sh.getColumn(5).numFmt="[$-416]d/mmm";
+      const thin = {style:"thin" as const, color:{argb:"FF000000"}};
+      for (let rowNumber=4;rowNumber<=sh.rowCount;rowNumber++) {
+        const row=sh.getRow(rowNumber);
+        if (rowNumber > 4 && rowNumber < line) {
+          const historico=String(row.getCell(6).value ?? "");
+          row.height=Math.max(27, Math.ceil(historico.length/53)*13);
+        }
+        for (let col=2;col<=6;col++) {
+          const cell=row.getCell(col);
+          cell.border={top:thin,bottom:thin,left:thin,right:thin};
+          cell.alignment={horizontal:"center",vertical:"middle",wrapText:true};
+          cell.font={name:"Arial",size:col===6 ? 9 : 10,bold:rowNumber===4 || rowNumber>=line || col===2 || col===3};
+        }
+      }
+      for (let rowNumber=line;rowNumber<=line+2;rowNumber++) {
+        sh.mergeCells(rowNumber,2,rowNumber,3);
+        sh.getRow(rowNumber).height=20;
+      }
+      sh.views=[{state:"normal",showGridLines:false}];
+      sh.pageSetup={orientation:"landscape",fitToPage:true,fitToWidth:1,fitToHeight:0};
 
     }
     const bytes=await wb.xlsx.writeBuffer();
