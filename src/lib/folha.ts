@@ -6,15 +6,16 @@ export interface ResultadoFolha { lancamentos: LancamentoFolha[]; ignorados: Eve
 interface Item { str: string; x: number; y: number }
 const numberBR = (s: string) => Math.round(Number(s.replace(/\./g, "").replace(",", ".")) * 100);
 const normalize = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+const verificarCancelamento = (signal?: AbortSignal) => { if (signal?.aborted) throw new DOMException("Leitura cancelada", "AbortError"); };
 
 /** Processa somente um formato identificado de relatório Senior, recusando dados ausentes. */
 export async function lerFolha(file: File, signal?: AbortSignal): Promise<EmpresaFolha[]> {
-  signal?.throwIfAborted();
+  verificarCancelamento(signal);
   const pdfjs = await import("pdfjs-dist");
   const worker = await import("pdfjs-dist/build/pdf.worker.min.mjs?url");
   pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
   const bytes = new Uint8Array(await file.arrayBuffer());
-  if (signal?.aborted) { bytes.fill(0); signal.throwIfAborted(); }
+  if (signal?.aborted) { bytes.fill(0); verificarCancelamento(signal); }
   const loadingTask = pdfjs.getDocument({ data: bytes });
   const abort = () => { void loadingTask.destroy().catch(() => {}); };
   signal?.addEventListener("abort", abort, { once: true });
@@ -24,7 +25,7 @@ export async function lerFolha(file: File, signal?: AbortSignal): Promise<Empres
   try {
     const pdf = await loadingTask.promise;
     for (let n = 1; n <= pdf.numPages; n++) {
-      signal?.throwIfAborted();
+      verificarCancelamento(signal);
       const page = await pdf.getPage(n);
       const content = await page.getTextContent();
       const width = page.getViewport({ scale: 1 }).width;
