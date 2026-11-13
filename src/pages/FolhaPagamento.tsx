@@ -5,6 +5,13 @@ const money = (cents: number) => (cents / 100).toLocaleString("pt-BR", {style:"c
 const normalize = (s:string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 const input = "mt-2 h-11 w-full rounded-lg border border-input bg-background px-3 outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const button = "rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground disabled:opacity-50";
+function ultimoDiaDoMes(competencia: string): string {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(competencia)) return "";
+  const [ano, mes] = competencia.split("-").map(Number);
+  const date = new Date(0);
+  date.setFullYear(ano, mes, 0);
+  return `${competencia}-${String(date.getDate()).padStart(2, "0")}`;
+}
 
 export default function FolhaPagamento() {
   const [empresa, setEmpresa] = useState("");
@@ -28,7 +35,7 @@ export default function FolhaPagamento() {
     setResultado(null);setErro("");setBaixados([]);setLoading(true);
     try {
       const all=await lerFolha(file, current.signal);
-      current.signal.throwIfAborted();
+      if (current.signal.aborted) return;
       const found=all.filter(e=> e.codigo===empresa.trim() || normalize(e.nome).includes(normalize(empresa)));
       if(found.length!==1) throw new Error(found.length ? `Mais de uma empresa encontrada (${found.map(e=>`${e.codigo} - ${e.nome}`).join("; ")}). Informe o código ou nome completo.` : "Empresa não encontrada. Confira o código ou nome informado.");
       const company=found[0];
@@ -104,10 +111,13 @@ export default function FolhaPagamento() {
     <div><p className="text-xs font-semibold uppercase tracking-widest text-primary">Lançamento</p><h1 className="mt-3 text-3xl font-semibold">Folha de pagamento</h1><p className="mt-2 text-muted-foreground">Informe os dados, depois selecione o PDF da folha.</p></div>
     <div className="grid gap-4 rounded-2xl border bg-card p-6 sm:grid-cols-2">
       <label className="text-sm font-medium">Empresa (nome ou código)<input className={input} value={empresa} onChange={e=>{invalidate();setEmpresa(e.target.value);}} /></label>
-      <label className="text-sm font-medium">Competência<input className={input} type="month" value={competencia} onChange={e=>{invalidate();setCompetencia(e.target.value);}} /></label>
-      <label className="text-sm font-medium">Data dos lançamentos<input className={input} type="date" value={data} onChange={e=>{invalidate();setData(e.target.value);}} /></label>
+      <label className="text-sm font-medium">Competência<input className={input} type="month" value={competencia} onChange={e=>{const mes=e.target.value;invalidate();setCompetencia(mes);setData(ultimoDiaDoMes(mes));}} /></label>
+      <div><label className="text-sm font-medium">Data dos lançamentos<input className={input} type="date" value={data} onChange={e=>{invalidate();setData(e.target.value);}} /></label><span className="mt-1 block text-xs font-normal text-muted-foreground">Sugerimos o último dia da competência; você pode alterar.</span></div>
       <label className="text-sm font-medium">Documento (opcional)<input className={input} value={doc} onChange={e=>{invalidate();setDoc(e.target.value);}} /></label>
-      {ready && <label className="text-sm font-medium sm:col-span-2">PDF da folha<input className={input} type="file" accept=".pdf,application/pdf" disabled={loading} onChange={e=>{const file=e.target.files?.[0];e.target.value="";if(file) void processar(file);}} /></label>}
+      <div className="sm:col-span-2">
+        <label className="block text-sm font-medium">PDF da folha<input aria-describedby="pdf-ajuda" className={input} type="file" accept=".pdf,application/pdf" disabled={!ready || loading} onChange={e=>{const file=e.target.files?.[0];e.target.value="";if(file && ready) void processar(file);}} /></label>
+        <p id="pdf-ajuda" className="mt-2 text-xs text-muted-foreground">{!ready ? "Para anexar, informe a empresa, a competência e uma data válida." : "Selecione o PDF. Após a leitura, você poderá conferir e baixar as planilhas."}</p>
+      </div>
       <p className="text-sm text-muted-foreground sm:col-span-2">Os dados ficam temporariamente nesta aba. Após os dois downloads, a tela é limpa. Os arquivos baixados permanecem no seu computador.</p>
       <button className="text-left text-sm text-muted-foreground underline" type="button" onClick={reset}>Limpar dados</button>
     </div>
