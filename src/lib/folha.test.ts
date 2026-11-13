@@ -32,4 +32,18 @@ describe("folha de pagamento",()=>{
     expect(r.diferenca).toBe(0);
     expect(r.ignorados.some(e=>e.codigo==="158")).toBe(true);
   });
+  it("trata abono como excluído e mapeia maternidade e ajuda de custo sem CLC",()=>{
+    const r=calcularFolha({...company,liquido:95000,eventos:[...company.eventos,
+      {codigo:"156",descricao:"Periculosidade Abono Pec.",clc:"",grupo:"provento",valor:4000,pagina:1},
+      {codigo:"152",descricao:"Média V.Variáv.Abono Pec.",clc:"",grupo:"provento",valor:5000,pagina:1},
+      {codigo:"190",descricao:"Média H.Extra Maternidade",clc:"",grupo:"provento",valor:1000,pagina:1},
+      {codigo:"192",descricao:"Média Variáv.Maternidade",clc:"",grupo:"provento",valor:2000,pagina:1},
+      {codigo:"693",descricao:"AJUDA DE CUSTO",clc:"",grupo:"provento",valor:7000,pagina:1},
+    ]});
+    expect(r.diferenca).toBe(0);
+    expect(r.pendentes).toHaveLength(0);
+    expect(r.lancamentos.find(l=>l.descricao==="SALÁRIO-MATERNIDADE")?.valor).toBe(3000);
+    expect(r.lancamentos.find(l=>l.descricao==="ORDENADOS")?.valor).toBe(107000);
+    expect(r.ignorados.filter(e=>["152","156"].includes(e.codigo))).toHaveLength(2);
+  });
 });
