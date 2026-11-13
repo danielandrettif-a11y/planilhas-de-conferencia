@@ -16,6 +16,7 @@ export async function lerFolha(file: File): Promise<EmpresaFolha[]> {
   const pdf = await loadingTask.promise;
   const empresas = new Map<string, EmpresaFolha>();
   const totais = new Map<string, Partial<Record<"provento" | "vantagem" | "desconto", number>>>();
+  const gruposPorEmpresa = new Map<string, FolhaGrupo[]>();
   try {
     for (let n = 1; n <= pdf.numPages; n++) {
       const page = await pdf.getPage(n);
@@ -37,7 +38,7 @@ export async function lerFolha(file: File): Promise<EmpresaFolha[]> {
       let empresa = empresas.get(key);
       if (!empresa) { empresa = {codigo:key,nome:m[2].trim(),competencia:comp,liquido:null,eventos:[],errosLeitura:[]}; empresas.set(key,empresa); }
       if (empresa.nome !== m[2].trim() || empresa.competencia !== comp) throw new Error(`Dados inconsistentes da empresa ${key} na página ${n}.`);
-      let grupos: FolhaGrupo[] = ["outros", "outros"];
+      const grupos: FolhaGrupo[] = [...(gruposPorEmpresa.get(key) ?? ["outros", "outros"])];
       for (const line of lines) {
         const full = text(line);
         for (const [label, grupo] of [["Proventos", "provento"], ["Vantagens", "vantagem"], ["Descontos", "desconto"]] as const) {
@@ -63,6 +64,7 @@ export async function lerFolha(file: File): Promise<EmpresaFolha[]> {
           empresa.eventos.push({codigo:firstMatch[1],descricao:desc,clc:cm?.[1] || "",grupo:grupos[side],valor:numberBR(vm[1]),pagina:n});
         }
       }
+      gruposPorEmpresa.set(key, grupos);
       page.cleanup();
     }
     for (const company of empresas.values()) {
@@ -92,8 +94,8 @@ export function calcularFolha(empresa: EmpresaFolha): ResultadoFolha {
   for (const e of empresa.eventos) {
     const desc=normalize(e.descricao);
     const diferencaFerias = e.clc === "1000" && /^DIFERENCA DE FERIAS\b/.test(desc);
-    const insalubridadeAbono = /^INSALUBRIDADE ABONO PEC\b/.test(desc);
-    if(e.grupo==="outros" || insalubridadeAbono || (!diferencaFerias && /FERIAS/.test(desc)) || ["1018","1019","1020","1021","1034"].includes(e.clc)) { ignorados.push(e); continue; }
+    const abonoExcluido = /^(?:INSALUBRIDADE|ADIC\.\s*NOTURNO) ABONO PEC\b/.test(desc);
+    if(e.grupo==="outros" || abonoExcluido || (!diferencaFerias && /FERIAS/.test(desc)) || ["1018","1019","1020","1021","1034"].includes(e.clc)) { ignorados.push(e); continue; }
     let rule=mapping[e.clc];
     if(e.clc==="1036") rule=/GOV/.test(desc)?["1239","83620","EMPRÉSTIMO CONSIGNADO GOV"]:/SANTANDER/.test(desc)?["1239","1856","EMPRÉSTIMO CONSIGNADO SANTANDER"]:undefined;
     if(!rule || (e.grupo==="desconto") !== (rule[0]==="1239")) { pendentes.push(e); continue; }
