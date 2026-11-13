@@ -16,6 +16,7 @@ function ultimoDiaDoMes(competencia: string): string {
 export default function FolhaPagamento() {
   const [empresa, setEmpresa] = useState("");
   const [competencia, setCompetencia] = useState("");
+  const [competenciaDigitada, setCompetenciaDigitada] = useState("");
   const [data, setData] = useState("");
   const [doc, setDoc] = useState("");
   const [resultado, setResultado] = useState<{empresa:EmpresaFolha; calculo:ResultadoFolha}|null>(null);
@@ -26,7 +27,7 @@ export default function FolhaPagamento() {
   const generation = useRef(0);
   useEffect(() => () => { controller.current?.abort(); generation.current++; }, []);
   const invalidate = () => {controller.current?.abort();controller.current=null;generation.current++;setLoading(false);setResultado(null);setErro("");setBaixados([]);};
-  const reset = () => {controller.current?.abort();controller.current=null;generation.current++;setLoading(false);setEmpresa("");setCompetencia("");setData("");setDoc("");setResultado(null);setErro("");setBaixados([]);};
+  const reset = () => {controller.current?.abort();controller.current=null;generation.current++;setLoading(false);setEmpresa("");setCompetencia("");setCompetenciaDigitada("");setData("");setDoc("");setResultado(null);setErro("");setBaixados([]);};
   const processar = async (file:File) => {
     controller.current?.abort();
     const current = new AbortController();
@@ -142,9 +143,9 @@ export default function FolhaPagamento() {
     <div><p className="text-xs font-semibold uppercase tracking-widest text-primary">Lançamento</p><h1 className="mt-3 text-3xl font-semibold">Folha de pagamento</h1><p className="mt-2 text-muted-foreground">Informe os dados, depois selecione o PDF da folha.</p></div>
     <div className="grid gap-4 rounded-2xl border bg-card p-6 sm:grid-cols-2">
       <label className="text-sm font-medium">Empresa (nome ou código)<input className={input} value={empresa} onChange={e=>{invalidate();setEmpresa(e.target.value);}} /></label>
-      <label className="text-sm font-medium">Competência<input className={input} type="month" value={competencia} onChange={e=>{const mes=e.target.value;invalidate();setCompetencia(mes);setData(ultimoDiaDoMes(mes));}} /></label>
+      <div><label className="text-sm font-medium">Competência<input className={input} type="text" inputMode="numeric" placeholder="MM/AAAA" maxLength={7} value={competenciaDigitada} aria-describedby="competencia-ajuda" aria-invalid={competenciaDigitada.length===7 && !competencia} onChange={e=>{const numeros=e.target.value.replace(/\D/g,"").slice(0,6);const exibicao=numeros.length>2?`${numeros.slice(0,2)}/${numeros.slice(2)}`:numeros;const mes=numeros.slice(0,2),ano=numeros.slice(2);const valido=numeros.length===6 && Number(mes)>=1 && Number(mes)<=12 && Number(ano)>0;const iso=valido?`${ano}-${mes}`:"";invalidate();setCompetenciaDigitada(exibicao);setCompetencia(iso);setData(ultimoDiaDoMes(iso));}} /></label><p id="competencia-ajuda" className={`mt-1 text-xs ${competenciaDigitada.length===7 && !competencia ? "text-destructive" : "text-muted-foreground"}`}>{competenciaDigitada.length===7 && !competencia ? "Informe um mês entre 01 e 12 e um ano válido." : "Digite o mês e o ano, por exemplo: 092026."}</p></div>
       <div><label className="text-sm font-medium">Data dos lançamentos<input className={input} type="date" value={data} onChange={e=>{invalidate();setData(e.target.value);}} /></label><span className="mt-1 block text-xs font-normal text-muted-foreground">Sugerimos o último dia da competência; você pode alterar.</span></div>
-      <label className="text-sm font-medium">Documento (opcional)<input className={input} value={doc} onChange={e=>{invalidate();setDoc(e.target.value);}} /></label>
+      <div><label className="text-sm font-medium">Documento (opcional)<input className={input} value={doc} onChange={e=>{invalidate();setDoc(e.target.value);}} /></label><p className="mt-1 text-xs text-muted-foreground">Preenche a coluna Doc da planilha de importação. Pode ficar em branco.</p></div>
       <div className="sm:col-span-2">
         <label className="block text-sm font-medium">PDF da folha<input aria-describedby="pdf-ajuda" className={input} type="file" accept=".pdf,application/pdf" disabled={!ready || loading} onChange={e=>{const file=e.target.files?.[0];e.target.value="";if(file && ready) void processar(file);}} /></label>
         <p id="pdf-ajuda" className="mt-2 text-xs text-muted-foreground">{!ready ? "Para anexar, informe a empresa, a competência e uma data válida." : "Selecione o PDF. Após a leitura, você poderá conferir e baixar as planilhas."}</p>
