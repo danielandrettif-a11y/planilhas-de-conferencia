@@ -71,12 +71,25 @@ export default function FolhaPagamento() {
         const col=e.clc==="1036" ? (/gov/i.test(e.descricao)?19:20) : colByCode[codigoEfetivoFolha(e)];
         if(col) values[col-1].push(e.valor/100);
       }
-      const lines=Math.max(1,...values.map(v=>v.length));
+      // Mantém o espaço de 17 linhas do modelo, expandindo se houver mais eventos.
+      const lines=Math.max(17,...values.map(v=>v.length));
       for(let i=0;i<lines;i++) details.addRow(values.map(v=>v[i] ?? null));
       const totalRow=lines+2;
       const total=details.getRow(totalRow);
-      values.forEach((v,i)=>{const col=details.getColumn(i+1);col.width=23;col.numFmt="#,##0.00";const letter=col.letter;total.getCell(i+1).value={formula:`SUM(${letter}2:${letter}${totalRow-1})`,result:v.reduce((a,b)=>a+b,0)};});
-      details.getRow(1).font={bold:true};details.views=[{state:"frozen",ySplit:1}];
+      const bordaFina = {style:"thin" as const,color:{argb:"FF000000"}};
+      const formatoContabil = '_-"R$ "* #,##0.00_-;\\-"R$ "* #,##0.00_-;_-"R$ "* \\-??_-;_-@_-';
+      values.forEach((v,i)=>{const col=details.getColumn(i+1);col.width=17;col.numFmt=formatoContabil;const letter=col.letter;total.getCell(i+1).value={formula:`SUM(${letter}2:${letter}${totalRow-1})`,result:v.reduce((a,b)=>a+b,0)};});
+      details.getRow(1).height=90;
+      for(let r=1;r<=totalRow;r++) {
+        const row=details.getRow(r);
+        for(let c=1;c<=headers.length;c++) {
+          const cell=row.getCell(c);
+          cell.border={top:bordaFina,bottom:bordaFina,left:bordaFina,right:bordaFina};
+          cell.font={name:"Calibri",size:10,bold:r===totalRow};
+          cell.alignment={horizontal:r===1?"center":"right",vertical:"middle",wrapText:r===1};
+        }
+      }
+      details.views=[{state:"frozen",ySplit:1,showGridLines:false}];
       sh.addRow(["PLANILHAS DE MOVIMENTOS", "", "", "", "", "FOLHA DE PAGAMENTO"]);
       sh.addRow([`EMPRESA: ${company.nome}`, "", "", "", "", `MÊS: ${competencia.slice(5)}/${competencia.slice(0,4)}`]);
       sh.addRow([]);sh.addRow(["","DEBITO","CREDITO","VALOR","DIA","HISTÓRICO"]);
@@ -85,8 +98,6 @@ export default function FolhaPagamento() {
       const line=sh.lastRow!.number+1;
       const terms=calculo.lancamentos.map((l,i)=>`${l.credito==="1239"?"+":l.debito==="1239"?"-":"+0*"}D${i+5}`).join("");
       sh.addRow(["","Total", "",{formula:terms.replace(/^\+/,""),result:calculo.liquidoCalculado/100}]);
-      sh.addRow(["","Líquido do PDF", "",company.liquido!/100]);
-      sh.addRow(["","Diferença", "",{formula:`D${line}-D${line+1}`,result:calculo.diferenca!/100}]);
       if (calculo.pendentes.length) {
         sh.addRow([]);
         sh.addRow(["","PENDÊNCIAS PARA REVISÃO", "", "", "", "Lançamentos abaixo não compõem o total. Informe as contas e ajuste a planilha antes de importar."]);
@@ -120,10 +131,8 @@ export default function FolhaPagamento() {
           cell.font={name:"Arial",size:col===6 ? 9 : 10,bold:rowNumber===4 || rowNumber>=line || col===2 || col===3};
         }
       }
-      for (let rowNumber=line;rowNumber<=line+2;rowNumber++) {
-        sh.mergeCells(rowNumber,2,rowNumber,3);
-        sh.getRow(rowNumber).height=20;
-      }
+      sh.mergeCells(line,2,line,3);
+      sh.getRow(line).height=20;
       sh.views=[{state:"normal",showGridLines:false}];
       sh.pageSetup={orientation:"landscape",fitToPage:true,fitToWidth:1,fitToHeight:0};
 
