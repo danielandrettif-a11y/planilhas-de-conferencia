@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { calcularFolha, lerFolha, type EmpresaFolha, type ResultadoFolha } from "@/lib/folha";
+import { calcularFolha, codigoEfetivoFolha, lerFolha, type EmpresaFolha, type ResultadoFolha } from "@/lib/folha";
 
 const money = (cents: number) => (cents / 100).toLocaleString("pt-BR", {style:"currency",currency:"BRL"});
 const normalize = (s:string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
@@ -50,7 +50,7 @@ export default function FolhaPagamento() {
       const values:number[][]=headers.map(()=>[]); const excluded=new Set(calculo.ignorados);
       for(const e of company.eventos) {
         if(excluded.has(e)) continue;
-        const col=e.clc==="1036" ? (/gov/i.test(e.descricao)?19:20) : colByCode[e.clc];
+        const col=e.clc==="1036" ? (/gov/i.test(e.descricao)?19:20) : colByCode[codigoEfetivoFolha(e)];
         if(col) values[col-1].push(e.valor/100);
       }
       const lines=Math.max(1,...values.map(v=>v.length));
@@ -69,6 +69,11 @@ export default function FolhaPagamento() {
       sh.addRow(["","Total", "",{formula:terms.replace(/^\+/,""),result:calculo.liquidoCalculado/100}]);
       sh.addRow(["","Líquido do PDF", "",company.liquido!/100]);
       sh.addRow(["","Diferença", "",{formula:`D${line}-D${line+1}`,result:calculo.diferenca!/100}]);
+      if (calculo.pendentes.length) {
+        sh.addRow([]);
+        sh.addRow(["","PENDÊNCIAS PARA REVISÃO", "", "", "", "Lançamentos abaixo não compõem o total. Informe as contas e ajuste a planilha antes de importar."]);
+        for (const e of calculo.pendentes) sh.addRow(["", "", "", e.valor/100, date, `REVISAR: ${e.descricao} — CLC ${e.clc || "não informado"}`]);
+      }
       sh.getColumn(4).numFmt="#,##0.00";sh.getColumn(5).numFmt="dd/mm/yyyy";
       [12,20,16,18,16,68].forEach((n,i)=>{sh.getColumn(i+1).width=n;});
       sh.getRow(4).font={bold:true}; sh.getRow(line).font={bold:true};
@@ -97,7 +102,8 @@ export default function FolhaPagamento() {
       <p className={canExport?"text-primary":"text-destructive"}>{canExport?"Valores conferem.":"Não foi possível concluir com segurança. Revise os eventos e as diferenças."}</p>
       {resultado.calculo.pendentes.length>0 && <div><p className="font-semibold">Eventos sem classificação ({resultado.calculo.pendentes.length}):</p><ul className="list-disc pl-5 text-sm">{resultado.calculo.pendentes.map((e,i)=><li key={i}>{e.grupo} · {e.codigo} · CLC {e.clc || "ausente"} · {e.descricao} · {money(e.valor)} · página {e.pagina}</li>)}</ul></div>}
       <details><summary className="cursor-pointer text-sm">Eventos não lançados ({resultado.calculo.ignorados.length})</summary><ul className="list-disc pl-5 text-sm">{resultado.calculo.ignorados.map((e,i)=><li key={i}>{e.descricao} · CLC {e.clc || "ausente"} · {money(e.valor)}</li>)}</ul></details>
-      <div className="flex flex-wrap gap-3"><button className={button} disabled={!canExport} onClick={()=>void download("importacao")}>Baixar importação</button><button className={button} disabled={!canExport} onClick={()=>void download("conferencia")}>Baixar conferência</button></div>
+      <p className="text-sm text-muted-foreground">Se houver pendências, você pode baixar a conferência para revisá-las. A importação só fica disponível quando a leitura e o líquido estiverem conferidos.</p>
+      <div className="flex flex-wrap gap-3"><button className={button} disabled={!canExport} onClick={()=>void download("importacao")}>Baixar importação</button><button className={button} onClick={()=>void download("conferencia")}>Baixar conferência</button></div>
     </div>}
   </section>;
 }
