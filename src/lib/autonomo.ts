@@ -66,10 +66,10 @@ export function lancarAutonomos(pessoas:Autonomo[]):{lancamentos:LancamentoAuton
   const lancamentos:LancamentoAutonomo[]=[],pendencias:string[]=[];
   for(const p of pessoas){
     if(p.outrosProventos||p.outrosDescontos||p.iss||p.pensao)pendencias.push(`Registro ${p.codigo}: há valores adicionais ou descontos sem conta definida.`);
-    const base=`${p.nome} REF. ${p.competencia.slice(5)}/${p.competencia.slice(0,4)}`;
-    if(p.bruto)lancamentos.push({valor:p.bruto,debito:"2083",credito:"2082",historico:`VALOR BRUTO AUTÔNOMO ${base}`});
-    if(p.inss)lancamentos.push({valor:p.inss,debito:"2082",credito:"1274",historico:`INSS RETIDO AUTÔNOMO ${base}`});
-    if(p.irrf)lancamentos.push({valor:p.irrf,debito:"2082",credito:"1162",historico:`IRRF RETIDO AUTÔNOMO ${base}`});
+    const base=`${p.nome} REFERENTE SERVIÇO PRESTADO PESSOA FISICA MÊS ${p.competencia.slice(5)}/${p.competencia.slice(0,4)}`;
+    if(p.bruto)lancamentos.push({valor:p.bruto,debito:"2083",credito:"2082",historico:`VALOR ${base}`});
+    if(p.inss)lancamentos.push({valor:p.inss,debito:"2082",credito:"1274",historico:`VALOR INSS S/ ${base}`});
+    if(p.irrf)lancamentos.push({valor:p.irrf,debito:"2082",credito:"1162",historico:`VALOR IRRF S/ ${base}`});
   }
   return {lancamentos,pendencias};
 }
