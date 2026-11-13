@@ -95,4 +95,27 @@ describe("limpeza de dados da folha", () => {
     expect(detalhes.getCell("A19").value).toMatchObject({formula:"SUM(A2:A18)",result:100});
     vi.unstubAllGlobals();
   });
+  it("gera a importação com a coluna Doc vazia e sem solicitar documento", async () => {
+    const eventos=[{codigo:"1",clc:"1000",descricao:"Salário",grupo:"provento",valor:10000,pagina:1}];
+    mocks.lerFolha.mockResolvedValue([{codigo:"0104",nome:"Empresa Exemplo",competencia:"2026-09",liquido:10000,eventos,errosLeitura:[]}]);
+    mocks.calcularFolha.mockReturnValue({lancamentos:[{debito:"1981",credito:"1239",descricao:"ORDENADOS",valor:10000,historico:"HISTÓRICO"}],ignorados:[],pendentes:[],liquidoCalculado:10000,diferenca:0});
+    const createUrl=vi.fn().mockReturnValue("blob:teste");
+    vi.stubGlobal("URL", Object.assign(URL, {createObjectURL:createUrl,revokeObjectURL:vi.fn()}));
+    vi.spyOn(HTMLAnchorElement.prototype,"click").mockImplementation(()=>{});
+    render(<FolhaPagamento />);
+    expect(screen.queryByLabelText(/Documento/)).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Empresa (nome ou código)"), {target:{value:"0104"}});
+    fireEvent.change(screen.getByLabelText("Competência"), {target:{value:"092026"}});
+    fireEvent.change(screen.getByLabelText("PDF da folha"), {target:{files:[new File(["teste"],"folha.pdf")]}});
+    await screen.findByText("Valores conferem.");
+    fireEvent.click(screen.getByRole("button",{name:"Baixar importação"}));
+    await waitFor(()=>expect(createUrl).toHaveBeenCalled());
+    const ExcelJS=(await import("exceljs")).default;
+    const workbook=new ExcelJS.Workbook();
+    await workbook.xlsx.load(await (createUrl.mock.calls[0][0] as Blob).arrayBuffer());
+    const sheet=workbook.getWorksheet("Planilha1")!;
+    expect(sheet.getCell("E1").value).toBe("Doc");
+    expect(sheet.getCell("E2").value).toBe("");
+    vi.unstubAllGlobals();
+  });
 });
