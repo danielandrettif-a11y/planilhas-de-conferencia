@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import Index from "./Index";
+import FolhaPagamento from "./FolhaPagamento";
 
 type Area = "inicio" | "conferencias" | "lancamento";
 type ModuleId = "folha" | "ferias" | "autonomo" | "faturamento";
@@ -92,7 +93,7 @@ const Dashboard = () => {
               <button type="button" onClick={() => setSelected(null)} className="mb-8 inline-flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground">
                 <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Voltar para Lançamento
               </button>
-              <div className="rounded-3xl border border-border bg-card p-8 shadow-[var(--shadow-soft)] sm:p-12">
+              {selected === "folha" ? <FolhaPagamento /> : <div className="rounded-3xl border border-border bg-card p-8 shadow-[var(--shadow-soft)] sm:p-12">
                 <div className="mb-6 inline-flex rounded-2xl bg-primary/10 p-4 text-primary"><selectedModule.icon className="h-7 w-7" aria-hidden="true" /></div>
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">Lançamento</p>
                 <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">{selectedModule.title}</h1>
@@ -101,7 +102,7 @@ const Dashboard = () => {
                   <p className="font-medium">Em desenvolvimento</p>
                   <p className="mt-1 text-sm text-muted-foreground">Esta funcionalidade será construída em uma próxima etapa.</p>
                 </div>
-              </div>
+              </div>}
             </section>
           ) : (
             <section>
@@ -116,7 +117,7 @@ const Dashboard = () => {
                     <span className="flex w-full items-start justify-between"><span className="rounded-xl bg-primary/10 p-3 text-primary"><module.icon className="h-5 w-5" aria-hidden="true" /></span><ArrowUpRight className="h-5 w-5 text-muted-foreground transition-colors group-hover:text-primary" aria-hidden="true" /></span>
                     <span className="mt-5 text-lg font-semibold">{module.title}</span>
                     <span className="mt-1 text-sm text-muted-foreground">{module.description}</span>
-                    <span className="mt-4 text-xs font-medium text-muted-foreground">Em desenvolvimento</span>
+                    {module.id !== "folha" && <span className="mt-4 text-xs font-medium text-muted-foreground">Em desenvolvimento</span>}
                   </button>
                 ))}
               </div>

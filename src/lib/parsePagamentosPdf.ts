@@ -112,7 +112,9 @@ export async function parsePagamentosPdfDetailed(
   onProgress?: (progress: PdfProcessingProgress) => void,
 ): Promise<PagamentosPdfResult> {
   const buffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+  const loadingTask = pdfjsLib.getDocument({ data: buffer });
+  try {
+  const pdf = await loadingTask.promise;
   const rows: PagamentoRow[] = [];
   const paginasSemTitulos: number[] = [];
   let linhasSuspeitas = 0;
@@ -148,6 +150,7 @@ export async function parsePagamentosPdfDetailed(
       }
     }
     if (reconhecidasNaPagina === 0) paginasSemTitulos.push(pageNumber);
+    page.cleanup();
 
     onProgress?.({ processedPages: pageNumber, totalPages: pdf.numPages });
   }
@@ -165,6 +168,10 @@ export async function parsePagamentosPdfDetailed(
     totalTitulos: rows.reduce((sum, row) => sum + row.valorTitulo, 0),
     totalEmAberto: rows.reduce((sum, row) => sum + row.valorAberto, 0),
   };
+  } finally {
+    await loadingTask.destroy();
+    if (buffer.byteLength) new Uint8Array(buffer).fill(0);
+  }
 }
 
 export async function parsePagamentosPdf(file: File): Promise<PagamentoRow[]> {

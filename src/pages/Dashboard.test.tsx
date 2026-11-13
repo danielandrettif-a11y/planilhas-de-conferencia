@@ -16,7 +16,7 @@ describe("navegação das áreas", () => {
     }
     fireEvent.click(screen.getByRole("button", { name: /Folha de pagamento/ }));
     expect(screen.getByRole("heading", { name: "Folha de pagamento" })).toBeInTheDocument();
-    expect(screen.getByText("Esta funcionalidade será construída em uma próxima etapa.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Empresa (nome ou código)")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Conferências" }));
     expect(screen.getByLabelText("Nome da empresa")).toHaveValue("Empresa Teste");
   });
