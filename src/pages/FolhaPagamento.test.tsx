@@ -12,7 +12,8 @@ describe("limpeza de dados da folha", () => {
     mocks.lerFolha.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
     render(<FolhaPagamento />);
     fireEvent.change(screen.getByLabelText("Empresa (nome ou código)"), { target: { value: "0104" } });
-    fireEvent.change(screen.getByLabelText("Competência"), { target: { value: "2026-09" } });
+    fireEvent.change(screen.getByLabelText("Competência"), { target: { value: "092026" } });
+    expect(screen.getByLabelText("Competência")).toHaveValue("09/2026");
     fireEvent.change(screen.getByLabelText("Data dos lançamentos"), { target: { value: "2026-09-30" } });
     fireEvent.change(screen.getByLabelText("PDF da folha"), { target: { files: [new File(["exemplo"], "folha.pdf", {type:"application/pdf"})] } });
     const signal = mocks.lerFolha.mock.calls[0][1] as AbortSignal;
@@ -24,15 +25,26 @@ describe("limpeza de dados da folha", () => {
     expect(screen.queryByText(/Empresa Exemplo/)).not.toBeInTheDocument();
     expect(screen.getByLabelText("PDF da folha")).toBeDisabled();
   });
+  it("aceita digitação contínua e impede mês inválido", () => {
+    render(<FolhaPagamento />);
+    const field=screen.getByLabelText("Competência");
+    for (const value of ["0", "09", "092", "09/20", "09/202", "09/2026"]) fireEvent.change(field, {target:{value}});
+    expect(field).toHaveValue("09/2026");
+    expect(screen.getByLabelText("Data dos lançamentos")).toHaveValue("2026-09-30");
+    fireEvent.change(field, {target:{value:"132026"}});
+    expect(field).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByText(/mês entre 01 e 12/)).toBeInTheDocument();
+    expect(screen.getByLabelText("PDF da folha")).toBeDisabled();
+  });
   it("mantém o anexo visível e sugere o último dia correto para cada competência", () => {
     render(<FolhaPagamento />);
     expect(screen.getByLabelText("PDF da folha")).toBeDisabled();
     expect(screen.getByText(/Para anexar, informe/)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Empresa (nome ou código)"), { target: { value: "BEDALAB" } });
-    fireEvent.change(screen.getByLabelText("Competência"), { target: { value: "2026-09" } });
+    fireEvent.change(screen.getByLabelText("Competência"), { target: { value: "092026" } });
     expect(screen.getByLabelText("Data dos lançamentos")).toHaveValue("2026-09-30");
     expect(screen.getByLabelText("PDF da folha")).toBeEnabled();
-    fireEvent.change(screen.getByLabelText("Competência"), { target: { value: "2024-02" } });
+    fireEvent.change(screen.getByLabelText("Competência"), { target: { value: "022024" } });
     expect(screen.getByLabelText("Data dos lançamentos")).toHaveValue("2024-02-29");
     fireEvent.change(screen.getByLabelText("Data dos lançamentos"), { target: { value: "" } });
     expect(screen.getByLabelText("PDF da folha")).toBeDisabled();
@@ -42,7 +54,7 @@ describe("limpeza de dados da folha", () => {
     mocks.calcularFolha.mockReturnValue({lancamentos:[],ignorados:[],pendentes:[],liquidoCalculado:10000,diferenca:0});
     render(<FolhaPagamento />);
     fireEvent.change(screen.getByLabelText("Empresa (nome ou código)"), { target: { value: "0104" } });
-    fireEvent.change(screen.getByLabelText("Competência"), { target: { value: "2026-09" } });
+    fireEvent.change(screen.getByLabelText("Competência"), { target: { value: "092026" } });
     fireEvent.change(screen.getByLabelText("PDF da folha"), { target: { files: [new File(["exemplo"], "folha.pdf", {type:"application/pdf"})] } });
     expect(await screen.findByText("Valores conferem.")).toBeInTheDocument();
     expect(screen.getByRole("button", {name:"Baixar importação"})).toBeEnabled();
@@ -57,7 +69,7 @@ describe("limpeza de dados da folha", () => {
     vi.spyOn(HTMLAnchorElement.prototype,"click").mockImplementation(()=>{});
     render(<FolhaPagamento />);
     fireEvent.change(screen.getByLabelText("Empresa (nome ou código)"), { target:{value:"0104"} });
-    fireEvent.change(screen.getByLabelText("Competência"), { target:{value:"2026-09"} });
+    fireEvent.change(screen.getByLabelText("Competência"), { target:{value:"092026"} });
     fireEvent.change(screen.getByLabelText("PDF da folha"), { target:{files:[new File(["teste"],"folha.pdf")] } });
     await screen.findByText("Valores conferem.");
     fireEvent.click(screen.getByRole("button",{name:"Baixar conferência"}));
