@@ -1,3 +1,5 @@
+import { modeloFolha } from "./modeloFolha";
+
 export type FolhaGrupo = "provento" | "vantagem" | "desconto" | "outros";
 export interface EventoFolha { codigo: string; descricao: string; clc: string; grupo: FolhaGrupo; valor: number; pagina: number }
 export interface EmpresaFolha { codigo: string; nome: string; competencia: string; liquido: number | null; eventos: EventoFolha[]; errosLeitura: string[] }
@@ -124,6 +126,9 @@ export function calcularFolha(empresa: EmpresaFolha): ResultadoFolha {
     const item=mapping[code]; const found=groups.get(item.join("|"));
     if(found) lancamentos.push({valor:found.valor,debito:"1274",credito:item[0],descricao:`TRANSFERÊNCIA ${item[2]}`,historico:`VR. QUE SE TRANSFERE REF. ${item[2]} MÊS ${mes}, CONF. FOLHA DE PAGAMENTO.`});
   }
+  const ordem=new Map(modeloFolha.map((item,index)=>[item.descricao,index]));
+  for (const l of lancamentos) { const modelo=modeloFolha.find(item=>item.descricao===l.descricao); if(modelo) l.historico=modelo.historico(mes); }
+  lancamentos.sort((a,b)=>(ordem.get(a.descricao) ?? 999)-(ordem.get(b.descricao) ?? 999));
   const liquidoCalculado=lancamentos.reduce((sum,l)=>sum+(l.credito==="1239"?l.valor:0)-(l.debito==="1239"?l.valor:0),0);
   return {lancamentos,ignorados,pendentes,liquidoCalculado,diferenca:empresa.liquido===null?null:liquidoCalculado-empresa.liquido};
 }
