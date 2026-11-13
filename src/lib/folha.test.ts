@@ -25,4 +25,11 @@ describe("folha de pagamento",()=>{
     expect(r.ignorados.some(e=>e.codigo==="154")).toBe(true);
     expect(r.ignorados.some(e=>e.codigo==="142")).toBe(false);
   });
+  it("exclui adicional noturno de abono pecuniário",()=>{
+    const r=calcularFolha({...company,eventos:[...company.eventos,
+      {codigo:"158",descricao:"Adic.Noturno Abono Pec.",clc:"1000",grupo:"provento",valor:8987,pagina:1},
+    ]});
+    expect(r.diferenca).toBe(0);
+    expect(r.ignorados.some(e=>e.codigo==="158")).toBe(true);
+  });
 });
