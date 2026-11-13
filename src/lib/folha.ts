@@ -89,14 +89,20 @@ const mapping: Record<string, [string,string,string]> = {
   "1015":["1239","1981","RECEBIDOS"], "1016":["1239","1981","ALIMENTAÇÃO"],
   "1017":["1239","1162","IRRF SOBRE SALÁRIOS"],
 };
+export function codigoEfetivoFolha(e: EventoFolha): string {
+  const desc=normalize(e.descricao);
+  if (!e.clc && /^MEDIA (?:H\.\s*EXTRA|VARIAV\.)\s*MATERNIDADE\b/.test(desc)) return "1004";
+  if (!e.clc && /^AJUDA DE CUSTO\b/.test(desc)) return "1000";
+  return e.clc;
+}
 export function calcularFolha(empresa: EmpresaFolha): ResultadoFolha {
   const groups = new Map<string,{valor:number; item:[string,string,string]}>(), ignorados:EventoFolha[]=[],pendentes:EventoFolha[]=[];
   for (const e of empresa.eventos) {
     const desc=normalize(e.descricao);
     const diferencaFerias = e.clc === "1000" && /^DIFERENCA DE FERIAS\b/.test(desc);
-    const abonoExcluido = /^(?:INSALUBRIDADE|ADIC\.\s*NOTURNO) ABONO PEC\b/.test(desc);
+    const abonoExcluido = /\b(?:PEC\.?|PECUNIARI[OA])\b/.test(desc);
     if(e.grupo==="outros" || abonoExcluido || (!diferencaFerias && /FERIAS/.test(desc)) || ["1018","1019","1020","1021","1034"].includes(e.clc)) { ignorados.push(e); continue; }
-    let rule=mapping[e.clc];
+    let rule=mapping[codigoEfetivoFolha(e)];
     if(e.clc==="1036") rule=/GOV/.test(desc)?["1239","83620","EMPRÉSTIMO CONSIGNADO GOV"]:/SANTANDER/.test(desc)?["1239","1856","EMPRÉSTIMO CONSIGNADO SANTANDER"]:undefined;
     if(!rule || (e.grupo==="desconto") !== (rule[0]==="1239")) { pendentes.push(e); continue; }
     const id=rule.join("|"); const current=groups.get(id); groups.set(id,{valor:(current?.valor||0)+e.valor,item:rule});
