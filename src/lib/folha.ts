@@ -8,17 +8,23 @@ const numberBR = (s: string) => Math.round(Number(s.replace(/\./g, "").replace("
 const normalize = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
 
 /** Processa somente um formato identificado de relatório Senior, recusando dados ausentes. */
-export async function lerFolha(file: File): Promise<EmpresaFolha[]> {
+export async function lerFolha(file: File, signal?: AbortSignal): Promise<EmpresaFolha[]> {
+  signal?.throwIfAborted();
   const pdfjs = await import("pdfjs-dist");
   const worker = await import("pdfjs-dist/build/pdf.worker.min.mjs?url");
   pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
-  const loadingTask = pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) });
-  const pdf = await loadingTask.promise;
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (signal?.aborted) { bytes.fill(0); signal.throwIfAborted(); }
+  const loadingTask = pdfjs.getDocument({ data: bytes });
+  const abort = () => { void loadingTask.destroy().catch(() => {}); };
+  signal?.addEventListener("abort", abort, { once: true });
   const empresas = new Map<string, EmpresaFolha>();
   const totais = new Map<string, Partial<Record<"provento" | "vantagem" | "desconto", number>>>();
   const gruposPorEmpresa = new Map<string, FolhaGrupo[]>();
   try {
+    const pdf = await loadingTask.promise;
     for (let n = 1; n <= pdf.numPages; n++) {
+      signal?.throwIfAborted();
       const page = await pdf.getPage(n);
       const content = await page.getTextContent();
       const width = page.getViewport({ scale: 1 }).width;
@@ -77,7 +83,11 @@ export async function lerFolha(file: File): Promise<EmpresaFolha[]> {
       }
     }
     return [...empresas.values()];
-  } finally { await loadingTask.destroy(); }
+  } finally {
+    signal?.removeEventListener("abort", abort);
+    await loadingTask.destroy();
+    if (bytes.byteLength) bytes.fill(0);
+  }
 }
 
 const mapping: Record<string, [string,string,string]> = {
