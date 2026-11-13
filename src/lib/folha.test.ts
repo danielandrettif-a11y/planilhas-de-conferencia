@@ -15,4 +15,14 @@ describe("folha de pagamento",()=>{
     const r=calcularFolha({...company,eventos:[...company.eventos,{codigo:"5",descricao:"Outro desconto",clc:"9999",grupo:"desconto",valor:300,pagina:1}],liquido:84700});
     expect(r.pendentes).toHaveLength(1);expect(r.diferenca).toBe(300);
   });
+  it("inclui diferença de férias e exclui insalubridade de abono pecuniário",()=>{
+    const r=calcularFolha({...company,liquido:96933,eventos:[...company.eventos,
+      {codigo:"142",descricao:"Diferença de Férias",clc:"1000",grupo:"provento",valor:11933,pagina:1},
+      {codigo:"154",descricao:"Insalubridade Abono Pec.",clc:"1000",grupo:"provento",valor:22154,pagina:1},
+    ]});
+    expect(r.liquidoCalculado).toBe(96933);
+    expect(r.diferenca).toBe(0);
+    expect(r.ignorados.some(e=>e.codigo==="154")).toBe(true);
+    expect(r.ignorados.some(e=>e.codigo==="142")).toBe(false);
+  });
 });
