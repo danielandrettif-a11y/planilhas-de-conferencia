@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { calcularFolha, type EmpresaFolha } from "./folha";
+import { modeloFolha } from "./modeloFolha";
 
 const company: EmpresaFolha = {codigo:"001",nome:"Exemplo",competencia:"2026-09",liquido:85000,errosLeitura:[],eventos:[
   {codigo:"1",descricao:"Salários",clc:"1000",grupo:"provento",valor:100000,pagina:1},
@@ -45,5 +46,16 @@ describe("folha de pagamento",()=>{
     expect(r.lancamentos.find(l=>l.descricao==="SALÁRIO-MATERNIDADE")?.valor).toBe(3000);
     expect(r.lancamentos.find(l=>l.descricao==="ORDENADOS")?.valor).toBe(107000);
     expect(r.ignorados.filter(e=>["152","156"].includes(e.codigo))).toHaveLength(2);
+  });
+  it("segue a ordem e os históricos do modelo com as transferências em sequência",()=>{
+    const r=calcularFolha({...company,liquido:115000,eventos:[...company.eventos,
+      {codigo:"278",descricao:"Salário Família",clc:"1002",grupo:"vantagem",valor:10000,pagina:1},
+      {codigo:"16",descricao:"Maternidade",clc:"1004",grupo:"provento",valor:20000,pagina:1},
+    ]});
+    expect(r.lancamentos.map(l=>l.descricao)).toEqual(["ORDENADOS","SALÁRIO-MATERNIDADE","TRANSFERÊNCIA SALÁRIO-MATERNIDADE","SALÁRIO-FAMÍLIA","TRANSFERÊNCIA SALÁRIO-FAMÍLIA","INSS DOS FUNCIONÁRIOS"]);
+    expect(r.lancamentos[0].historico).toBe("VR. BRUTO ORDENADO REF. MÊS 09 CONF. FOLHA DE PAGAMENTO");
+    expect(r.diferenca).toBe(0);
+    expect(modeloFolha).toHaveLength(22);
+    expect(modeloFolha.filter(l=>l.valorExterno).map(l=>l.descricao)).toEqual(["INSS/EMPRESA","FGTS"]);
   });
 });

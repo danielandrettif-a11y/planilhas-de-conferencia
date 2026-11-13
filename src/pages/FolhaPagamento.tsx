@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { modeloFolha } from "@/lib/modeloFolha";
 import { calcularFolha, codigoEfetivoFolha, lerFolha, type EmpresaFolha, type ResultadoFolha } from "@/lib/folha";
 
 const money = (cents: number) => (cents / 100).toLocaleString("pt-BR", {style:"currency",currency:"BRL"});
@@ -50,6 +51,7 @@ export default function FolhaPagamento() {
     const version = generation.current;
     const ExcelJS = (await import("exceljs")).default;
     const wb=new ExcelJS.Workbook();
+    wb.calcProperties.fullCalcOnLoad=true;
     const {empresa:company, calculo}=resultado;
     const dateParts=data.split("-").map(Number); const date=new Date(dateParts[0],dateParts[1]-1,dateParts[2]);
     if(tipo==="importacao") {
@@ -92,10 +94,16 @@ export default function FolhaPagamento() {
       sh.addRow(["PLANILHAS DE MOVIMENTOS", "", "", "", "", "FOLHA DE PAGAMENTO"]);
       sh.addRow([`EMPRESA: ${company.nome}`, "", "", "", "", `MÊS: ${competencia.slice(5)}/${competencia.slice(0,4)}`]);
       sh.addRow([]);sh.addRow(["","DEBITO","CREDITO","VALOR","DIA","HISTÓRICO"]);
-      const cols:Record<string,string>={"ORDENADOS":"A","SALÁRIO-MATERNIDADE":"B","TRANSFERÊNCIA SALÁRIO-MATERNIDADE":"B","SALÁRIO-FAMÍLIA":"C","TRANSFERÊNCIA SALÁRIO-FAMÍLIA":"C","PLANO DE SAÚDE":"D","FALTAS":"E","INSS DOS FUNCIONÁRIOS":"F","ASSOCIADOS AO SINDICATO":"G","PENSÃO A RECOLHER":"I","SEGURO DE VIDA":"J","RECEBIDOS":"K","VALE-TRANSPORTE":"L","ALIMENTAÇÃO":"N","IRRF SOBRE SALÁRIOS":"O","EMPRÉSTIMO CONSIGNADO GOV":"S","EMPRÉSTIMO CONSIGNADO SANTANDER":"T"};
-      for(const l of calculo.lancamentos) sh.addRow(["",Number(l.debito),Number(l.credito),{formula:`'planilha folha'!${cols[l.descricao]}${totalRow}`,result:l.valor/100},date,l.historico]);
+      const mes=competencia.slice(5);
+      for (const item of modeloFolha) {
+        const lancamento=calculo.lancamentos.find(l=>l.descricao===item.descricao);
+        const valor=lancamento?.valor ?? 0;
+        // Guias de INSS patronal e FGTS são lançadas posteriormente.
+        const celulaValor = item.valorExterno ? null : {formula:`'planilha folha'!${item.coluna}${totalRow}`,result:valor/100};
+        sh.addRow(["",Number(item.debito),Number(item.credito),celulaValor,date,item.historico(mes)]);
+      }
       const line=sh.lastRow!.number+1;
-      const terms=calculo.lancamentos.map((l,i)=>`${l.credito==="1239"?"+":l.debito==="1239"?"-":"+0*"}D${i+5}`).join("");
+      const terms=modeloFolha.map((l,i)=>`${l.credito==="1239"?"+":l.debito==="1239"?"-":"+0*"}D${i+5}`).join("");
       sh.addRow(["","Total", "",{formula:terms.replace(/^\+/,""),result:calculo.liquidoCalculado/100}]);
       if (calculo.pendentes.length) {
         sh.addRow([]);
