@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { calcularFolha, codigoEfetivoFolha, lerFolha, type EmpresaFolha, type ResultadoFolha } from "@/lib/folha";
 
 const money = (cents: number) => (cents / 100).toLocaleString("pt-BR", {style:"currency",currency:"BRL"});
@@ -15,11 +15,20 @@ export default function FolhaPagamento() {
   const [erro, setErro] = useState("");
   const [loading, setLoading] = useState(false);
   const [baixados, setBaixados] = useState<string[]>([]);
-  const reset = () => {setEmpresa("");setCompetencia("");setData("");setDoc("");setResultado(null);setErro("");setBaixados([]);};
+  const controller = useRef<AbortController | null>(null);
+  const generation = useRef(0);
+  useEffect(() => () => { controller.current?.abort(); generation.current++; }, []);
+  const invalidate = () => {controller.current?.abort();controller.current=null;generation.current++;setLoading(false);setResultado(null);setErro("");setBaixados([]);};
+  const reset = () => {controller.current?.abort();controller.current=null;generation.current++;setLoading(false);setEmpresa("");setCompetencia("");setData("");setDoc("");setResultado(null);setErro("");setBaixados([]);};
   const processar = async (file:File) => {
+    controller.current?.abort();
+    const current = new AbortController();
+    controller.current = current;
+    generation.current++;
     setResultado(null);setErro("");setBaixados([]);setLoading(true);
     try {
-      const all=await lerFolha(file);
+      const all=await lerFolha(file, current.signal);
+      current.signal.throwIfAborted();
       const found=all.filter(e=> e.codigo===empresa.trim() || normalize(e.nome).includes(normalize(empresa)));
       if(found.length!==1) throw new Error(found.length ? `Mais de uma empresa encontrada (${found.map(e=>`${e.codigo} - ${e.nome}`).join("; ")}). Informe o código ou nome completo.` : "Empresa não encontrada. Confira o código ou nome informado.");
       const company=found[0];
@@ -27,10 +36,11 @@ export default function FolhaPagamento() {
       if(company.errosLeitura.length) throw new Error(company.errosLeitura.join(" "));
       if(company.liquido===null || !company.eventos.length) throw new Error("O relatório não possui líquido ou eventos identificáveis para esta empresa.");
       setResultado({empresa:company,calculo:calcularFolha(company)});
-    } catch(e) {setErro(e instanceof Error?e.message:"Não foi possível ler o PDF.");} finally {setLoading(false);}
+    } catch(e) {if (!current.signal.aborted) setErro(e instanceof Error?e.message:"Não foi possível ler o PDF.");} finally {if (controller.current === current) {controller.current=null;setLoading(false);}}
   };
   const download = async (tipo:"importacao"|"conferencia") => {
     if(!resultado) return;
+    const version = generation.current;
     const ExcelJS = (await import("exceljs")).default;
     const wb=new ExcelJS.Workbook();
     const {empresa:company, calculo}=resultado;
@@ -79,7 +89,12 @@ export default function FolhaPagamento() {
       sh.getRow(4).font={bold:true}; sh.getRow(line).font={bold:true};
 
     }
-    const bytes=await wb.xlsx.writeBuffer();const url=URL.createObjectURL(new Blob([bytes],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}));
+    const bytes=await wb.xlsx.writeBuffer();
+    const dataBuffer = bytes as unknown as ArrayBuffer | Uint8Array;
+    const clearBytes = () => { if (dataBuffer instanceof Uint8Array) dataBuffer.fill(0); else new Uint8Array(dataBuffer).fill(0); };
+    if (version !== generation.current) { clearBytes(); return; }
+    const url=URL.createObjectURL(new Blob([bytes],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}));
+    clearBytes();
     const link=document.createElement("a");link.href=url;link.download=`folha-${company.codigo}-${competencia}-${tipo}.xlsx`;link.click();URL.revokeObjectURL(url);
     const next=[...new Set([...baixados,tipo])];setBaixados(next);if(next.length===2) reset();
   };
@@ -88,12 +103,12 @@ export default function FolhaPagamento() {
   return <section className="mx-auto max-w-4xl space-y-6">
     <div><p className="text-xs font-semibold uppercase tracking-widest text-primary">Lançamento</p><h1 className="mt-3 text-3xl font-semibold">Folha de pagamento</h1><p className="mt-2 text-muted-foreground">Informe os dados, depois selecione o PDF da folha.</p></div>
     <div className="grid gap-4 rounded-2xl border bg-card p-6 sm:grid-cols-2">
-      <label className="text-sm font-medium">Empresa (nome ou código)<input className={input} value={empresa} onChange={e=>{setEmpresa(e.target.value);setResultado(null);}} /></label>
-      <label className="text-sm font-medium">Competência<input className={input} type="month" value={competencia} onChange={e=>{setCompetencia(e.target.value);setResultado(null);}} /></label>
-      <label className="text-sm font-medium">Data dos lançamentos<input className={input} type="date" value={data} onChange={e=>setData(e.target.value)} /></label>
-      <label className="text-sm font-medium">Documento (opcional)<input className={input} value={doc} onChange={e=>setDoc(e.target.value)} /></label>
+      <label className="text-sm font-medium">Empresa (nome ou código)<input className={input} value={empresa} onChange={e=>{invalidate();setEmpresa(e.target.value);}} /></label>
+      <label className="text-sm font-medium">Competência<input className={input} type="month" value={competencia} onChange={e=>{invalidate();setCompetencia(e.target.value);}} /></label>
+      <label className="text-sm font-medium">Data dos lançamentos<input className={input} type="date" value={data} onChange={e=>{invalidate();setData(e.target.value);}} /></label>
+      <label className="text-sm font-medium">Documento (opcional)<input className={input} value={doc} onChange={e=>{invalidate();setDoc(e.target.value);}} /></label>
       {ready && <label className="text-sm font-medium sm:col-span-2">PDF da folha<input className={input} type="file" accept=".pdf,application/pdf" disabled={loading} onChange={e=>{const file=e.target.files?.[0];e.target.value="";if(file) void processar(file);}} /></label>}
-      <p className="text-sm text-muted-foreground sm:col-span-2">Os dados são processados no navegador. Após baixar os dois arquivos, os dados desta tela são limpos.</p>
+      <p className="text-sm text-muted-foreground sm:col-span-2">Os dados ficam temporariamente nesta aba. Após os dois downloads, a tela é limpa. Os arquivos baixados permanecem no seu computador.</p>
       <button className="text-left text-sm text-muted-foreground underline" type="button" onClick={reset}>Limpar dados</button>
     </div>
     {loading && <p role="status">Lendo a folha...</p>}{erro && <p role="alert" className="rounded-xl bg-destructive/10 p-4 text-destructive">{erro}</p>}
