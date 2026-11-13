@@ -8,11 +8,11 @@ function ultimaData(ano:number,mes:number){const d=new Date(0);d.setFullYear(ano
 
 export default function Autonomo() {
   const [empresa,setEmpresa]=useState("");const [competencia,setCompetencia]=useState("");const [textoCompetencia,setTextoCompetencia]=useState("");const [data,setData]=useState("");
-  const [contaIrrf,setContaIrrf]=useState("");const [resultado,setResultado]=useState<EmpresaAutonomo|null>(null);const [erro,setErro]=useState("");const [loading,setLoading]=useState(false);
+  const [resultado,setResultado]=useState<EmpresaAutonomo|null>(null);const [erro,setErro]=useState("");const [loading,setLoading]=useState(false);
   const controller=useRef<AbortController|null>(null), versao=useRef(0);
   useEffect(()=>()=>{controller.current?.abort();versao.current++;},[]);
   const invalidar=()=>{controller.current?.abort();controller.current=null;versao.current++;setResultado(null);setErro("");setLoading(false);};
-  const limpar=()=>{invalidar();setEmpresa("");setCompetencia("");setTextoCompetencia("");setData("");setContaIrrf("");};
+  const limpar=()=>{invalidar();setEmpresa("");setCompetencia("");setTextoCompetencia("");setData("");};
   const ready=!!(empresa.trim()&&competencia&&data);
   const carregar=async(file:File)=>{
     invalidar();const current=new AbortController();controller.current=current;setLoading(true);
@@ -26,7 +26,7 @@ export default function Autonomo() {
       setResultado(found);
     }catch(e){if(!current.signal.aborted)setErro(e instanceof Error?e.message:"Não foi possível ler o PDF.");}finally{if(controller.current===current){controller.current=null;setLoading(false);}}
   };
-  const calculo=resultado?lancarAutonomos(resultado.pessoas,contaIrrf):null;
+  const calculo=resultado?lancarAutonomos(resultado.pessoas):null;
   const baixar=async()=>{
     if(!resultado||!calculo||calculo.pendencias.length)return;
     const current=versao.current;const ExcelJS=(await import("exceljs")).default;const wb=new ExcelJS.Workbook();const sh=wb.addWorksheet("Planilha1");
@@ -51,7 +51,6 @@ export default function Autonomo() {
     {loading&&<p role="status">Lendo o PDF...</p>}{erro&&<p role="alert" className="rounded-xl bg-destructive/10 p-4 text-destructive">{erro}</p>}
     {resultado&&calculo&&<div className="space-y-4 rounded-2xl border bg-card p-6"><h2 className="text-xl font-semibold">Conferência: {resultado.codigo} — {resultado.nome}</h2>
       <p>{resultado.pessoas.length} profissional(is) · Bruto: <strong>{dinheiro(resultado.totais.bruto!)}</strong> · INSS: <strong>{dinheiro(resultado.totais.inss!)}</strong> · IRRF: <strong>{dinheiro(resultado.totais.irrf!)}</strong> · Líquido: <strong>{dinheiro(resultado.totais.liquido!)}</strong></p>
-      {resultado.pessoas.some(p=>p.irrf>0)&&<label className="block max-w-sm text-sm font-medium">Conta de crédito do IRRF<input className={input} inputMode="numeric" value={contaIrrf} onChange={e=>{versao.current++;setContaIrrf(e.target.value.replace(/\D/g,""));}} placeholder="Informe a conta contábil" /></label>}
       {calculo.pendencias.length>0&&<div className="rounded-xl bg-destructive/10 p-4 text-sm text-destructive"><p className="font-semibold">Resolva as pendências antes de baixar:</p><ul className="list-disc pl-5">{calculo.pendencias.map((p,i)=><li key={i}>{p}</li>)}</ul></div>}
       <details><summary className="cursor-pointer font-medium">Ver lançamentos ({calculo.lancamentos.length})</summary><div className="mt-3 overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr><th>Histórico</th><th>Débito</th><th>Crédito</th><th>Valor</th></tr></thead><tbody>{calculo.lancamentos.map((l,i)=><tr key={i} className="border-t"><td className="py-2 pr-3">{l.historico}</td><td>{l.debito}</td><td>{l.credito}</td><td>{dinheiro(l.valor)}</td></tr>)}</tbody></table></div></details>
       <button type="button" disabled={!!calculo.pendencias.length} onClick={()=>void baixar()} className="rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground disabled:opacity-50">Baixar planilha de importação</button>
