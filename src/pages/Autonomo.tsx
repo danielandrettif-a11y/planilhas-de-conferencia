@@ -33,22 +33,24 @@ export default function Autonomo() {
     sh.addRow(["DATA","VALOR","DEBITO","CREDITO","Doc","HISTORICO"]);
     const [year,month,day]=data.split("-").map(Number), date=new Date(year,month-1,day);
     for(const l of calculo.lancamentos)sh.addRow([date,l.valor/100,Number(l.debito),Number(l.credito),"",l.historico]);
-    const aviso=sh.addRow(["ATENÇÃO: confira se há pró-labore. Use a tabela abaixo para trocar as contas dos lançamentos correspondentes. APAGUE TODAS AS 5 LINHAS DE AVISO antes de importar."]);
+    sh.addRow([]).height=10;
+    const aviso=sh.addRow(["ATENÇÃO: confira se há pró-labore e ajuste as contas e os históricos conforme a tabela. Substitua **** pelo nome do sócio. APAGUE AS 5 LINHAS DE AVISO antes de importar."]);
     sh.mergeCells(aviso.number,1,aviso.number,6);
-    aviso.height=32;
+    aviso.height=36;
     const avisoCelula=aviso.getCell(1);
     avisoCelula.font={bold:true,color:{argb:"FF9C0006"},size:11};
     avisoCelula.fill={type:"pattern",pattern:"solid",fgColor:{argb:"FFFFE699"}};
     avisoCelula.alignment={vertical:"middle",wrapText:true};
-    const cabecalho=sh.addRow(["LANÇAMENTO","DÉBITO ATUAL","TROCAR PARA","CRÉDITO ATUAL","TROCAR PARA","REFERÊNCIA DAS CONTAS"]);
+    const cabecalho=sh.addRow(["LANÇAMENTO","DÉBITO ATUAL","DÉBITO NOVO","CRÉDITO ATUAL","CRÉDITO NOVO","HISTÓRICO SUGERIDO"]);
+    const referenciaMes=`${competencia.slice(5,7)}/${competencia.slice(0,4)}`;
     const referencias=[
-      ["Remuneração","2083","2009","2082","1260","2009: Pró-labore | 1260: Pró-labore a pagar"],
-      ["INSS","2082","1260","1274","1274","1260: Pró-labore a pagar | 1274: Previdência social a recolher"],
-      ["IRRF","2082","1260","1162","1162","1260: Pró-labore a pagar | 1162: I.R.R.F. sobre salários"],
+      ["Remuneração","2083","2009","2082","1260",`VALOR REFERENTE PRÓ-LABORE SÓCIO **** REFERENTE AO MÊS ${referenciaMes}.`],
+      ["INSS","2082","1260","1274","1274",`VALOR INSS S/ PRÓ-LABORE SÓCIO **** REFERENTE AO MÊS ${referenciaMes}.`],
+      ["IRRF","2082","1260","1162","1162",`VALOR IRRF S/ PRÓ-LABORE SÓCIO **** REFERENTE AO MÊS ${referenciaMes}.`],
     ];
     const linhasReferencia=referencias.map(linha=>sh.addRow(linha));
     for(const linha of [cabecalho,...linhasReferencia]){
-      linha.height=28;
+      linha.height=32;
       linha.eachCell(celula=>{
         celula.fill={type:"pattern",pattern:"solid",fgColor:{argb:linha===cabecalho?"FFFFD966":"FFFFF2CC"}};
         celula.font={bold:linha===cabecalho,color:{argb:"FF4A3200"},size:10};
@@ -74,7 +76,7 @@ export default function Autonomo() {
     {resultado&&calculo&&<div className="space-y-4 rounded-2xl border bg-card p-6"><h2 className="text-xl font-semibold">Conferência: {resultado.codigo} — {resultado.nome}</h2>
       <p>{resultado.pessoas.length} profissional(is) · Bruto: <strong>{dinheiro(resultado.totais.bruto!)}</strong> · INSS: <strong>{dinheiro(resultado.totais.inss!)}</strong> · IRRF: <strong>{dinheiro(resultado.totais.irrf!)}</strong> · Líquido: <strong>{dinheiro(resultado.totais.liquido!)}</strong></p>
       {calculo.pendencias.length>0&&<div className="rounded-xl bg-destructive/10 p-4 text-sm text-destructive"><p className="font-semibold">Resolva as pendências antes de baixar:</p><ul className="list-disc pl-5">{calculo.pendencias.map((p,i)=><li key={i}>{p}</li>)}</ul></div>}
-      <div role="note" className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm"><strong>Confira antes de importar:</strong> verifique se algum lançamento é de pró-labore e ajuste os lançamentos necessários. O aviso também aparece na última linha da planilha: confira os lançamentos e apague essa linha antes de importar.</div>
+      <div role="note" className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm"><strong>Confira antes de importar:</strong> verifique se algum lançamento é de pró-labore e ajuste os lançamentos necessários. Ao final da planilha, consulte as contas e os históricos sugeridos e apague as 5 linhas de aviso antes de importar.</div>
       <details><summary className="cursor-pointer font-medium">Ver lançamentos ({calculo.lancamentos.length})</summary><div className="mt-3 overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr><th>Histórico</th><th>Débito</th><th>Crédito</th><th>Valor</th></tr></thead><tbody>{calculo.lancamentos.map((l,i)=><tr key={i} className="border-t"><td className="py-2 pr-3">{l.historico}</td><td>{l.debito}</td><td>{l.credito}</td><td>{dinheiro(l.valor)}</td></tr>)}</tbody></table></div></details>
       <button type="button" disabled={!!calculo.pendencias.length} onClick={()=>void baixar()} className="rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground disabled:opacity-50">Baixar planilha de importação</button>
     </div>}
