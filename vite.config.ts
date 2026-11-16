@@ -5,6 +5,7 @@ import { componentTagger } from "lovable-tagger";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
+  define: { __SITE_BUILD_TIME__: JSON.stringify(new Date().toISOString()) },
   base: mode === "production" ? "/planilhas-de-conferencia/" : "/",
   server: {
     host: "::",
