@@ -31,9 +31,10 @@ export default function Autonomo() {
     if(!resultado||!calculo||calculo.pendencias.length)return;
     const current=versao.current;const ExcelJS=(await import("exceljs")).default;const wb=new ExcelJS.Workbook();const sh=wb.addWorksheet("Planilha1");
     sh.addRow(["DATA","VALOR","DEBITO","CREDITO","Doc","HISTORICO"]);
-    sh.getCell("A1").note="Antes de importar, confira se algum lançamento é de pró-labore e ajuste os lançamentos necessários.";
     const [year,month,day]=data.split("-").map(Number), date=new Date(year,month-1,day);
     for(const l of calculo.lancamentos)sh.addRow([date,l.valor/100,Number(l.debito),Number(l.credito),"",l.historico]);
+    const aviso=sh.addRow(["ATENÇÃO: confira se algum lançamento é de PRÓ-LABORE. Faça os ajustes necessários e APAGUE ESTA LINHA antes de importar."]);
+    sh.mergeCells(aviso.number,1,aviso.number,6);aviso.height=35;const avisoCelula=aviso.getCell(1);avisoCelula.font={bold:true,color:{argb:"FF9C0006"},size:11};avisoCelula.fill={type:"pattern",pattern:"solid",fgColor:{argb:"FFFFE699"}};avisoCelula.alignment={vertical:"middle",wrapText:true};
     sh.getColumn(1).numFmt="dd/mm/yyyy";sh.getColumn(2).numFmt="#,##0.00";[15,18,15,15,16,70].forEach((n,i)=>{sh.getColumn(i+1).width=n;});
     const bytes=await wb.xlsx.writeBuffer(), raw=bytes as unknown as ArrayBuffer|Uint8Array;
     const clear=()=>{if(raw instanceof Uint8Array)raw.fill(0);else new Uint8Array(raw).fill(0);};
@@ -53,7 +54,7 @@ export default function Autonomo() {
     {resultado&&calculo&&<div className="space-y-4 rounded-2xl border bg-card p-6"><h2 className="text-xl font-semibold">Conferência: {resultado.codigo} — {resultado.nome}</h2>
       <p>{resultado.pessoas.length} profissional(is) · Bruto: <strong>{dinheiro(resultado.totais.bruto!)}</strong> · INSS: <strong>{dinheiro(resultado.totais.inss!)}</strong> · IRRF: <strong>{dinheiro(resultado.totais.irrf!)}</strong> · Líquido: <strong>{dinheiro(resultado.totais.liquido!)}</strong></p>
       {calculo.pendencias.length>0&&<div className="rounded-xl bg-destructive/10 p-4 text-sm text-destructive"><p className="font-semibold">Resolva as pendências antes de baixar:</p><ul className="list-disc pl-5">{calculo.pendencias.map((p,i)=><li key={i}>{p}</li>)}</ul></div>}
-      <div role="note" className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm"><strong>Confira antes de importar:</strong> verifique se algum lançamento é de pró-labore e ajuste os lançamentos necessários. Esse aviso também está na nota da célula DATA da planilha.</div>
+      <div role="note" className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm"><strong>Confira antes de importar:</strong> verifique se algum lançamento é de pró-labore e ajuste os lançamentos necessários. O aviso também aparece na última linha da planilha: confira os lançamentos e apague essa linha antes de importar.</div>
       <details><summary className="cursor-pointer font-medium">Ver lançamentos ({calculo.lancamentos.length})</summary><div className="mt-3 overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr><th>Histórico</th><th>Débito</th><th>Crédito</th><th>Valor</th></tr></thead><tbody>{calculo.lancamentos.map((l,i)=><tr key={i} className="border-t"><td className="py-2 pr-3">{l.historico}</td><td>{l.debito}</td><td>{l.credito}</td><td>{dinheiro(l.valor)}</td></tr>)}</tbody></table></div></details>
       <button type="button" disabled={!!calculo.pendencias.length} onClick={()=>void baixar()} className="rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground disabled:opacity-50">Baixar planilha de importação</button>
     </div>}
