@@ -33,8 +33,8 @@ export default function Autonomo() {
     sh.addRow(["DATA","VALOR","DEBITO","CREDITO","Doc","HISTORICO"]);
     const [year,month,day]=data.split("-").map(Number), date=new Date(year,month-1,day);
     for(const l of calculo.lancamentos)sh.addRow([date,l.valor/100,Number(l.debito),Number(l.credito),"",l.historico]);
-    const aviso=sh.addRow(["ATENÇÃO: confira se algum lançamento é de PRÓ-LABORE. Faça os ajustes necessários e APAGUE ESTA LINHA antes de importar."]);
-    sh.mergeCells(aviso.number,1,aviso.number,6);aviso.height=35;const avisoCelula=aviso.getCell(1);avisoCelula.font={bold:true,color:{argb:"FF9C0006"},size:11};avisoCelula.fill={type:"pattern",pattern:"solid",fgColor:{argb:"FFFFE699"}};avisoCelula.alignment={vertical:"middle",wrapText:true};
+    const aviso=sh.addRow(["ATENÇÃO: confira se algum lançamento é de PRÓ-LABORE e ajuste as contas. Referências: remuneração — débito 2009 (Pró-labore), crédito 1260 (Pró-labore a pagar); INSS — débito 1260, crédito 1274 (Previdência social a recolher); IRRF — débito 1260, crédito 1162 (I.R.R.F. sobre salários). APAGUE ESTA LINHA antes de importar."]);
+    sh.mergeCells(aviso.number,1,aviso.number,6);aviso.height=65;const avisoCelula=aviso.getCell(1);avisoCelula.font={bold:true,color:{argb:"FF9C0006"},size:11};avisoCelula.fill={type:"pattern",pattern:"solid",fgColor:{argb:"FFFFE699"}};avisoCelula.alignment={vertical:"middle",wrapText:true};
     sh.getColumn(1).numFmt="dd/mm/yyyy";sh.getColumn(2).numFmt="#,##0.00";[15,18,15,15,16,70].forEach((n,i)=>{sh.getColumn(i+1).width=n;});
     const bytes=await wb.xlsx.writeBuffer(), raw=bytes as unknown as ArrayBuffer|Uint8Array;
     const clear=()=>{if(raw instanceof Uint8Array)raw.fill(0);else new Uint8Array(raw).fill(0);};
