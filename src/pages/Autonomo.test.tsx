@@ -23,7 +23,7 @@ describe("tela de autônomos",()=>{
   expect(await screen.findByText(/verifique se algum lançamento é de pró-labore/i)).toBeInTheDocument();
   fireEvent.click(await screen.findByRole("button",{name:"Baixar planilha de importação"}));await waitFor(()=>expect(createUrl).toHaveBeenCalled());
   const ExcelJS=(await import("exceljs")).default;const wb=new ExcelJS.Workbook();await wb.xlsx.load(await (createUrl.mock.calls[0][0] as Blob).arrayBuffer());const sh=wb.getWorksheet("Planilha1")!;
-  expect(sh.getCell("A1").note).toContain("pró-labore");expect(sh.getRow(1).values).toEqual([, "DATA","VALOR","DEBITO","CREDITO","Doc","HISTORICO"]);expect([sh.getCell("B2").value,sh.getCell("C2").value,sh.getCell("D2").value]).toEqual([1943.41,2083,2082]);expect([sh.getCell("B3").value,sh.getCell("C3").value,sh.getCell("D3").value]).toEqual([213.77,2082,1274]);
+  expect(String(sh.getCell("A4").value)).toContain("APAGUE ESTA LINHA");expect(sh.getCell("A4").isMerged).toBe(true);expect(sh.getRow(1).values).toEqual([, "DATA","VALOR","DEBITO","CREDITO","Doc","HISTORICO"]);expect([sh.getCell("B2").value,sh.getCell("C2").value,sh.getCell("D2").value]).toEqual([1943.41,2083,2082]);expect([sh.getCell("B3").value,sh.getCell("C3").value,sh.getCell("D3").value]).toEqual([213.77,2082,1274]);
   expect(screen.getByLabelText("Empresa (nome ou código)")).toHaveValue("");
  });
 });
