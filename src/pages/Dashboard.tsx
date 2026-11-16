@@ -9,6 +9,9 @@ import FolhaPagamento from "./FolhaPagamento";
 import Autonomo from "./Autonomo";
 import Ferias from "./Ferias";
 
+declare const __SITE_BUILD_TIME__: string;
+const ultimaAtualizacao = new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" }).format(new Date(__SITE_BUILD_TIME__));
+
 type Area = "inicio" | "conferencias" | "lancamento";
 type ModuleId = "folha" | "ferias" | "autonomo" | "faturamento";
 
@@ -42,7 +45,10 @@ const Dashboard = () => {
               <p className="text-base font-semibold tracking-tight">Planilhas e lançamentos</p>
             </div>
           </div>
-          <ThemeToggle />
+          <div className="flex items-center gap-3">
+            <p className="text-right text-xs text-muted-foreground">Versão atualizada em<br /><time dateTime={__SITE_BUILD_TIME__} className="font-medium text-foreground">{ultimaAtualizacao}</time></p>
+            <ThemeToggle />
+          </div>
           <nav aria-label="Áreas do sistema" className="order-last flex w-full gap-1 rounded-xl bg-muted p-1 sm:order-none sm:ml-auto sm:w-auto">
             <button type="button" aria-current={area === "inicio" ? "page" : undefined} onClick={() => changeArea("inicio")} className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors sm:flex-none ${area === "inicio" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
               <Home className="h-4 w-4" aria-hidden="true" /> Início
