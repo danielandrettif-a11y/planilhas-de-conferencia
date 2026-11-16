@@ -41,14 +41,15 @@ export default function Autonomo() {
     avisoCelula.font={bold:true,color:{argb:"FF9C0006"},size:11};
     avisoCelula.fill={type:"pattern",pattern:"solid",fgColor:{argb:"FFFFE699"}};
     avisoCelula.alignment={vertical:"middle",wrapText:true};
-    const cabecalho=sh.addRow(["LANÇAMENTO","DÉBITO ATUAL","DÉBITO NOVO","CRÉDITO ATUAL","CRÉDITO NOVO","HISTÓRICO SUGERIDO"]);
+    const cabecalho=sh.addRow(["LANÇAMENTO","DÉBITO","CRÉDITO","HISTÓRICO SUGERIDO"]);
     const referenciaMes=`${competencia.slice(5,7)}/${competencia.slice(0,4)}`;
     const referencias=[
-      ["Remuneração","2083","2009","2082","1260",`VALOR REFERENTE PRÓ-LABORE SÓCIO **** REFERENTE AO MÊS ${referenciaMes}.`],
-      ["INSS","2082","1260","1274","1274",`VALOR INSS S/ PRÓ-LABORE SÓCIO **** REFERENTE AO MÊS ${referenciaMes}.`],
-      ["IRRF","2082","1260","1162","1162",`VALOR IRRF S/ PRÓ-LABORE SÓCIO **** REFERENTE AO MÊS ${referenciaMes}.`],
+      ["Remuneração","2009","1260",`VALOR REFERENTE PRÓ-LABORE SÓCIO **** REFERENTE AO MÊS ${referenciaMes}.`],
+      ["INSS","1260","1274",`VALOR INSS S/ PRÓ-LABORE SÓCIO **** REFERENTE AO MÊS ${referenciaMes}.`],
+      ["IRRF","1260","1162",`VALOR IRRF S/ PRÓ-LABORE SÓCIO **** REFERENTE AO MÊS ${referenciaMes}.`],
     ];
     const linhasReferencia=referencias.map(linha=>sh.addRow(linha));
+    for(const linha of [cabecalho,...linhasReferencia])sh.mergeCells(linha.number,4,linha.number,6);
     for(const linha of [cabecalho,...linhasReferencia]){
       linha.height=32;
       linha.eachCell(celula=>{
