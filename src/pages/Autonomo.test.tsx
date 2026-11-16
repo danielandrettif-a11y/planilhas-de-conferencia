@@ -20,9 +20,10 @@ describe("tela de autônomos",()=>{
   mocks.lancar.mockReturnValue({pendencias:[],lancamentos:[{valor:194341,debito:"2083",credito:"2082",historico:"BRUTO EXEMPLO"},{valor:21377,debito:"2082",credito:"1274",historico:"INSS EXEMPLO"}]});
   const createUrl=vi.fn().mockReturnValue("blob:teste");vi.stubGlobal("URL",Object.assign(URL,{createObjectURL:createUrl,revokeObjectURL:vi.fn()}));vi.spyOn(HTMLAnchorElement.prototype,"click").mockImplementation(()=>{});
   render(<Autonomo/>);fireEvent.change(screen.getByLabelText("Empresa (nome ou código)"),{target:{value:"0113"}});fireEvent.change(screen.getByLabelText("Competência"),{target:{value:"092026"}});fireEvent.change(screen.getByLabelText("PDF de autônomos"),{target:{files:[new File(["teste"],"autonomo.pdf")]}});
+  expect(await screen.findByText(/verifique se algum lançamento é de pró-labore/i)).toBeInTheDocument();
   fireEvent.click(await screen.findByRole("button",{name:"Baixar planilha de importação"}));await waitFor(()=>expect(createUrl).toHaveBeenCalled());
   const ExcelJS=(await import("exceljs")).default;const wb=new ExcelJS.Workbook();await wb.xlsx.load(await (createUrl.mock.calls[0][0] as Blob).arrayBuffer());const sh=wb.getWorksheet("Planilha1")!;
-  expect(sh.getRow(1).values).toEqual([, "DATA","VALOR","DEBITO","CREDITO","Doc","HISTORICO"]);expect([sh.getCell("B2").value,sh.getCell("C2").value,sh.getCell("D2").value]).toEqual([1943.41,2083,2082]);expect([sh.getCell("B3").value,sh.getCell("C3").value,sh.getCell("D3").value]).toEqual([213.77,2082,1274]);
+  expect(sh.getCell("A1").note).toContain("pró-labore");expect(sh.getRow(1).values).toEqual([, "DATA","VALOR","DEBITO","CREDITO","Doc","HISTORICO"]);expect([sh.getCell("B2").value,sh.getCell("C2").value,sh.getCell("D2").value]).toEqual([1943.41,2083,2082]);expect([sh.getCell("B3").value,sh.getCell("C3").value,sh.getCell("D3").value]).toEqual([213.77,2082,1274]);
   expect(screen.getByLabelText("Empresa (nome ou código)")).toHaveValue("");
  });
 });
