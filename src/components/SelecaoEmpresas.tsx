@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { baixarZip, nomePastaZip, nomeZip, nomeInternoZip, separarPdf, type ArquivoZip } from "@/lib/arquivos";
+import { baixarZip, aliasesEmpresasZip, nomePastaZip, nomeZip, nomeInternoZip, separarPdf, type ArquivoZip } from "@/lib/arquivos";
 
 const normalizar = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 export type EmpresaIdentificada = { codigo: string; nome: string };
@@ -90,28 +90,29 @@ export function PainelLote<T>({itens, gerando, baixar, aviso}: {itens: ItemLote<
 export async function baixarLote<T>(
   tipo: string, competencia: string, itens: ItemLote<T>[], file: File,
   paginas: (resultado: T) => number[],
-  planilhas: (resultado: T) => Promise<ArquivoZip[]>,
+  planilhas: (resultado: T, alias: string) => Promise<ArquivoZip[]>,
   valido: () => boolean,
 ) {
   const arquivos: ArquivoZip[] = [];
   try {
     if (!itens.length || itens.some(i => i.erro || i.resultado === undefined || !i.empresa)) throw new Error("Há empresas com pendências.");
+    const aliases = aliasesEmpresasZip(itens.map(i => i.empresa!.nome));
     const pastas = new Set<string>();
     const paginasUsadas = new Set<number>();
-    for (const i of itens) {
-      const pasta = nomePastaZip(i.empresa!.codigo, i.empresa!.nome);
+    for (const [indice, i] of itens.entries()) {
+      const pasta = nomePastaZip(aliases[indice], competencia);
       if (pastas.has(pasta.toLowerCase())) throw new Error("Duas empresas gerariam a mesma pasta.");
       pastas.add(pasta.toLowerCase());
       const p = [...new Set(paginas(i.resultado!))];
       if (p.some(n => paginasUsadas.has(n))) throw new Error("Empresas compartilham páginas no PDF. Revise o relatório antes de separar.");
       p.forEach(n => paginasUsadas.add(n));
     }
-    for (const i of itens) {
+    for (const [indice, i] of itens.entries()) {
       if (!valido()) return false;
-      const empresa = i.empresa!, resultado = i.resultado!, pasta = nomePastaZip(empresa.codigo, empresa.nome);
-      arquivos.push({nome: pasta + "/" + nomeInternoZip(tipo, "pdf"), bytes: await separarPdf(file, paginas(resultado))});
+      const alias = aliases[indice], resultado = i.resultado!, pasta = nomePastaZip(alias, competencia);
+      arquivos.push({nome: pasta + "/" + nomeInternoZip(tipo, "pdf", alias, competencia), bytes: await separarPdf(file, paginas(resultado))});
       if (!valido()) return false;
-      const gerados = await planilhas(resultado);
+      const gerados = await planilhas(resultado, alias);
       for (const a of gerados) arquivos.push({...a, nome: pasta + "/" + a.nome});
       if (!valido()) return false;
     }

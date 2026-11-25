@@ -1,20 +1,63 @@
-/** Componentes curtos e compatíveis com nomes do Windows/Excel. */
+/** Nomes curtos para evitar caminhos longos no Windows/Excel. */
 function parteZip(valor: string, max: number): string {
   return valor.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9 _-]/g, " ").replace(/\s+/g, " ").trim().slice(0, max).trim() || "Empresa";
 }
 
-export function nomePastaZip(codigo: string, empresa: string): string {
-  return `${parteZip(codigo, 12)} - ${parteZip(empresa, 32)}`;
+const LIMITE_EMPRESA = 20;
+
+export function abreviarEmpresaZip(empresa: string): string {
+  const nome = parteZip(empresa, 1000).toUpperCase()
+    .replace(/\b(?:LTDA|LIMITADA|EIRELI|EPP|ME|S A|SA)\b/g, " ")
+    .replace(/\s+/g, " ").trim() || "EMPRESA";
+  if (nome.length <= LIMITE_EMPRESA) return nome;
+  const palavras = nome.split(" ");
+  const abreviacoes: Record<string, string> = {
+    SERVICOS: "SERV", MEDICOS: "MED", MEDICAS: "MED", INSTITUTO: "INST",
+    HOSPITAL: "HOSP", CLINICA: "CLIN", LABORATORIO: "LAB",
+    DIAGNOSTICO: "DIAG", DIAGNOSTICOS: "DIAG", COMERCIO: "COM",
+    ADMINISTRACAO: "ADM", PARTICIPACOES: "PART", COMUNICACAO: "COMUN",
+  };
+  const reduzido = palavras.map(p => abreviacoes[p] ?? p).join(" ");
+  if (reduzido.length <= LIMITE_EMPRESA) return reduzido;
+  // Mantém a primeira palavra legível e usa iniciais das restantes se necessário.
+  const [primeira, ...resto] = palavras;
+  const base = (abreviacoes[primeira] ?? primeira).slice(0, LIMITE_EMPRESA);
+  const iniciais = resto.map(p => p[0]).join("");
+  const espaco = LIMITE_EMPRESA - base.length - 1;
+  return espaco > 0 && iniciais ? base + " " + iniciais.slice(0, espaco) : base;
+}
+
+/** Nomes únicos mesmo quando duas razões sociais têm a mesma abreviação. */
+export function aliasesEmpresasZip(empresas: string[]): string[] {
+  const usados = new Set<string>();
+  return empresas.map(empresa => {
+    const base = abreviarEmpresaZip(empresa);
+    let alias = base, n = 2;
+    while (usados.has(alias)) {
+      const sufixo = " " + n++;
+      alias = base.slice(0, LIMITE_EMPRESA - sufixo.length).trim() + sufixo;
+    }
+    usados.add(alias);
+    return alias;
+  });
+}
+
+function mesAnoZip(competencia: string): string {
+  const [ano, mes] = competencia.split("-");
+  return /^\d{4}$/.test(ano) && /^(0[1-9]|1[0-2])$/.test(mes) ? mes + "-" + ano : "Sem-mes";
+}
+
+export function nomePastaZip(alias: string, competencia: string): string {
+  return parteZip(alias, LIMITE_EMPRESA) + " " + mesAnoZip(competencia);
 }
 
 export function nomeZip(tipo: string, competencia: string, identificacao = "Todas"): string {
-  const [ano, mes] = competencia.split("-");
-  return `${parteZip(tipo, 12)} ${parteZip(identificacao, 32)} ${mes}-${ano}.zip`;
+  return parteZip(tipo, 12) + " " + (identificacao === "Todas" ? "Todas" : abreviarEmpresaZip(identificacao)) + " " + mesAnoZip(competencia) + ".zip";
 }
 
-export function nomeInternoZip(tipo: string, finalidade: "pdf" | "importacao" | "conferencia"): string {
-  if (finalidade === "pdf") return `${parteZip(tipo, 12)}.pdf`;
-  return finalidade === "importacao" ? "Importacao.xlsx" : "Conferencia.xlsx";
+export function nomeInternoZip(tipo: string, finalidade: "pdf" | "importacao" | "conferencia", alias: string, competencia: string): string {
+  const titulo = finalidade === "pdf" ? parteZip(tipo, 12) : finalidade === "importacao" ? "Importacao" : "Conferencia";
+  return titulo + " " + nomePastaZip(alias, competencia) + (finalidade === "pdf" ? ".pdf" : ".xlsx");
 }
 
 /** Nomes seguros para os arquivos baixados, mantendo a identificação legível. */
