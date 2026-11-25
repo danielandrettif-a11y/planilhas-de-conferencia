@@ -1,5 +1,5 @@
 export interface Autonomo { nome:string; codigo:string; bruto:number; inss:number; deducaoInss:number; irrf:number; iss:number; pensao:number; outrosProventos:number; outrosDescontos:number; liquido:number; competencia:string; pagina:number }
-export interface EmpresaAutonomo { codigo:string; nome:string; pessoas:Autonomo[]; problemas:string[]; totais: Partial<Record<"bruto"|"inss"|"irrf"|"liquido",number>> }
+export interface EmpresaAutonomo { codigo:string; nome:string; pessoas:Autonomo[]; problemas:string[]; paginas?:number[]; totais: Partial<Record<"bruto"|"inss"|"irrf"|"liquido",number>> }
 type Parcial = Partial<Autonomo> & {pagina:number};
 type Item = {str:string;x:number;y:number};
 const cents=(s:string)=>Math.round(Number(s.replace(/\./g,"").replace(",","."))*100);
@@ -41,9 +41,10 @@ export async function lerAutonomos(file:File, signal?:AbortSignal):Promise<Empre
       if(!header)throw new Error(`Não foi possível identificar a empresa na página ${n}.`);
       const code=header[1], name=header[2].trim();
       if(atualEmpresa && atualEmpresa.codigo!==code){fechar();emTotal=false;}
-      let current=empresas.get(code);if(!current){current={codigo:code,nome:name,pessoas:[],problemas:[],totais:{}};empresas.set(code,current);}
+      let current=empresas.get(code);if(!current){current={codigo:code,nome:name,pessoas:[],problemas:[],paginas:[],totais:{}};empresas.set(code,current);}
       if(current.nome!==name) throw new Error(`Identificação inconsistente da empresa ${code}.`);
       atualEmpresa=current;
+      current.paginas!.push(n);
       for(const line of lines){
         if(/^Total Geral da Empresa\b/i.test(line)){fechar();emTotal=true;continue;}
         const terceiro=line.match(/^Terceiro:\s*(\d+)\s*-\s*(.+?)\s+Compet[eê]ncia:\s*(\d{2})\/(\d{4})/i);
