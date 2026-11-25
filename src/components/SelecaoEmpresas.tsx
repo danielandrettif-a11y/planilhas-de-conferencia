@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { baixarZip, nomeArquivo, separarPdf, type ArquivoZip } from "@/lib/arquivos";
+import { baixarZip, nomePastaZip, nomeZip, nomeInternoZip, separarPdf, type ArquivoZip } from "@/lib/arquivos";
 
 const normalizar = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 export type EmpresaIdentificada = { codigo: string; nome: string };
@@ -86,10 +86,6 @@ export function PainelLote<T>({itens, gerando, baixar, aviso}: {itens: ItemLote<
   </div>;
 }
 
-function pastaEmpresa(e: EmpresaIdentificada) {
-  const limpar = (v: string) => v.replace(/[\\/:*?"<>|\x00-\x1f]/g, " ").replace(/\s+/g, " ").trim().replace(/[. ]+$/, "");
-  return (limpar(e.codigo) || "Empresa") + " - " + (limpar(e.nome) || "Empresa");
-}
 
 export async function baixarLote<T>(
   tipo: string, competencia: string, itens: ItemLote<T>[], file: File,
@@ -103,7 +99,7 @@ export async function baixarLote<T>(
     const pastas = new Set<string>();
     const paginasUsadas = new Set<number>();
     for (const i of itens) {
-      const pasta = pastaEmpresa(i.empresa!);
+      const pasta = nomePastaZip(i.empresa!.codigo, i.empresa!.nome);
       if (pastas.has(pasta.toLowerCase())) throw new Error("Duas empresas gerariam a mesma pasta.");
       pastas.add(pasta.toLowerCase());
       const p = [...new Set(paginas(i.resultado!))];
@@ -112,13 +108,13 @@ export async function baixarLote<T>(
     }
     for (const i of itens) {
       if (!valido()) return false;
-      const empresa = i.empresa!, resultado = i.resultado!, pasta = pastaEmpresa(empresa);
-      arquivos.push({nome: pasta + "/" + nomeArquivo(tipo, empresa.nome, competencia, "pdf"), bytes: await separarPdf(file, paginas(resultado))});
+      const empresa = i.empresa!, resultado = i.resultado!, pasta = nomePastaZip(empresa.codigo, empresa.nome);
+      arquivos.push({nome: pasta + "/" + nomeInternoZip(tipo, "pdf"), bytes: await separarPdf(file, paginas(resultado))});
       if (!valido()) return false;
       const gerados = await planilhas(resultado);
       for (const a of gerados) arquivos.push({...a, nome: pasta + "/" + a.nome});
       if (!valido()) return false;
     }
-    return await baixarZip(arquivos, nomeArquivo(tipo, "Todas as empresas", competencia, "zip"), valido);
+    return await baixarZip(arquivos, nomeZip(tipo, competencia), valido);
   } finally { arquivos.forEach(a => a.bytes.fill(0)); }
 }

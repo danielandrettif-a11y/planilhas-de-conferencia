@@ -1,3 +1,22 @@
+/** Componentes curtos e compatíveis com nomes do Windows/Excel. */
+function parteZip(valor: string, max: number): string {
+  return valor.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9 _-]/g, " ").replace(/\s+/g, " ").trim().slice(0, max).trim() || "Empresa";
+}
+
+export function nomePastaZip(codigo: string, empresa: string): string {
+  return `${parteZip(codigo, 12)} - ${parteZip(empresa, 32)}`;
+}
+
+export function nomeZip(tipo: string, competencia: string, identificacao = "Todas"): string {
+  const [ano, mes] = competencia.split("-");
+  return `${parteZip(tipo, 12)} ${parteZip(identificacao, 32)} ${mes}-${ano}.zip`;
+}
+
+export function nomeInternoZip(tipo: string, finalidade: "pdf" | "importacao" | "conferencia"): string {
+  if (finalidade === "pdf") return `${parteZip(tipo, 12)}.pdf`;
+  return finalidade === "importacao" ? "Importacao.xlsx" : "Conferencia.xlsx";
+}
+
 /** Nomes seguros para os arquivos baixados, mantendo a identificação legível. */
 export function nomeArquivo(tipo: string, empresa: string, competencia: string, extensao: string, finalidade?: string): string {
   const nome = empresa.replace(/[\\/:*?"<>|\x00-\x1f]/g, " ").replace(/\s+/g, " ").trim().replace(/[. ]+$/, "") || "Empresa";

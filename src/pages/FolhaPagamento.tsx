@@ -1,4 +1,4 @@
-import { baixarPdf, baixarZip, separarPdf, nomeArquivo, type ArquivoZip } from "@/lib/arquivos";
+import { baixarPdf, baixarZip, separarPdf, nomeArquivo, nomeZip, nomeInternoZip, type ArquivoZip } from "@/lib/arquivos";
 import { SeletorEmpresas, PainelLote, useSelecaoEmpresas, resolverLote, baixarLote, type ItemLote } from "@/components/SelecaoEmpresas";
 import { useEffect, useRef, useState } from "react";
 import { modeloFolha } from "@/lib/modeloFolha";
@@ -188,14 +188,14 @@ export default function FolhaPagamento() {
     const version = generation.current, arquivos: ArquivoZip[] = [], company = resultado.empresa;
     setGerandoZip(true); setErro("");
     try {
-      arquivos.push({ nome: nomeArquivo("Folha", company.nome, competencia, "pdf"), bytes: await separarPdf(pdfOriginal.current, company.paginas ?? []) });
+      arquivos.push({ nome: nomeInternoZip("Folha","pdf"), bytes: await separarPdf(pdfOriginal.current, company.paginas ?? []) });
       for (const tipo of ["conferencia", "importacao"] as const) {
         if (version !== generation.current) return;
         const bytes = await download(tipo, true);
         if (!bytes) return;
-        arquivos.push({ nome: nomeArquivo("Folha", company.nome, competencia, "xlsx", tipo === "importacao" ? "Importação" : "Conferência"), bytes });
+        arquivos.push({ nome: nomeInternoZip("Folha",tipo), bytes });
       }
-      if (await baixarZip(arquivos, nomeArquivo("Folha", company.nome, competencia, "zip", "Todos os arquivos"), () => version === generation.current)) reset();
+      if (await baixarZip(arquivos, nomeZip("Folha",competencia,company.nome), () => version === generation.current)) reset();
     } catch (e) { if (version === generation.current) setErro(e instanceof Error ? e.message : "Não foi possível gerar o ZIP."); }
     finally { arquivos.forEach(a => a.bytes.fill(0)); setGerandoZip(false); }
   };
@@ -208,7 +208,7 @@ export default function FolhaPagamento() {
         const arquivos: ArquivoZip[] = [];
         try { for (const tipo of ["conferencia","importacao"] as const) {
           const bytes = await download(tipo,true,r);if (!bytes) throw new Error("Geração cancelada.");
-          arquivos.push({nome:nomeArquivo("Folha",r.empresa.nome,competencia,"xlsx",tipo==="importacao"?"Importação":"Conferência"),bytes});
+          arquivos.push({nome:nomeInternoZip("Folha",tipo),bytes});
         } return arquivos; } catch(e) { arquivos.forEach(a=>a.bytes.fill(0));throw e; }
       }, () => version === generation.current)) reset();
     } catch(e) {if(version===generation.current)setErro(e instanceof Error?e.message:"Não foi possível gerar o ZIP.");}
