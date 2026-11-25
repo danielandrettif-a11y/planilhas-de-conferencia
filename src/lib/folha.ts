@@ -2,7 +2,7 @@ import { modeloFolha } from "./modeloFolha";
 
 export type FolhaGrupo = "provento" | "vantagem" | "desconto" | "outros";
 export interface EventoFolha { codigo: string; descricao: string; clc: string; grupo: FolhaGrupo; valor: number; pagina: number }
-export interface EmpresaFolha { codigo: string; nome: string; competencia: string; liquido: number | null; eventos: EventoFolha[]; errosLeitura: string[] }
+export interface EmpresaFolha { codigo: string; nome: string; competencia: string; liquido: number | null; eventos: EventoFolha[]; errosLeitura: string[]; paginas?: number[] }
 export interface LancamentoFolha { descricao: string; valor: number; debito: string; credito: string; historico: string }
 export interface ResultadoFolha { lancamentos: LancamentoFolha[]; ignorados: EventoFolha[]; pendentes: EventoFolha[]; liquidoCalculado: number; diferenca: number | null }
 interface Item { str: string; x: number; y: number }
@@ -45,8 +45,9 @@ export async function lerFolha(file: File, signal?: AbortSignal): Promise<Empres
       if (!m || !dt) throw new Error(`Não foi possível identificar a empresa ou a competência na página ${n}.`);
       const key = m[1], comp = `${dt[2]}-${dt[1]}`;
       let empresa = empresas.get(key);
-      if (!empresa) { empresa = {codigo:key,nome:m[2].trim(),competencia:comp,liquido:null,eventos:[],errosLeitura:[]}; empresas.set(key,empresa); }
+      if (!empresa) { empresa = {codigo:key,nome:m[2].trim(),competencia:comp,liquido:null,eventos:[],errosLeitura:[],paginas:[]}; empresas.set(key,empresa); }
       if (empresa.nome !== m[2].trim() || empresa.competencia !== comp) throw new Error(`Dados inconsistentes da empresa ${key} na página ${n}.`);
+      empresa.paginas!.push(n);
       const grupos: FolhaGrupo[] = [...(gruposPorEmpresa.get(key) ?? ["outros", "outros"])];
       for (const line of lines) {
         const full = text(line);
