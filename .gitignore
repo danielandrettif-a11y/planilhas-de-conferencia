@@ -12,6 +12,11 @@ dist
 dist-ssr
 *.local
 
+# Credenciais de ambiente
+.env
+.env.*
+!.env.example
+
 # Arquivos contábeis e documentos privados
 *.xlsx
 *.xls

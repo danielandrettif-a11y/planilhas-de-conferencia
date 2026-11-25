@@ -19,3 +19,9 @@ No código do aplicativo, a preferência de tema (`light` ou `dark`) é persisti
 O `.gitignore` bloqueia formatos contábeis e documentos privados. A publicação executa `npm run security:check`, que verifica documentos rastreados e padrões conhecidos de comunicação. Essa verificação é preventiva, não prova uma ausência absoluta de riscos ou de persistência fora do aplicativo.
 
 Em computadores compartilhados, use **Limpar dados**, feche a aba ao terminar e cuide dos arquivos baixados e das cópias originais de acordo com sua necessidade.
+
+## Exemplos e histórico público
+
+Use apenas nomes, identificadores, datas e valores fictícios em exemplos e testes. Não copie trechos de arquivos de empresas para o repositório. Antes de publicar, revise também scripts e testes: a verificação automática pode identificar padrões conhecidos, mas não consegue reconhecer todos os dados reais.
+
+Remover um dado da versão atual não o apaga dos commits antigos, branches, pull requests, forks, cópias locais ou caches. O tratamento do histórico exige planejamento e pode precisar de suporte do GitHub.

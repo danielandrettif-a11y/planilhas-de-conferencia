@@ -30,14 +30,20 @@ const trackedFiles = gitFiles();
 const errors = [];
 
 for (const file of trackedFiles) {
+  if (/^(?:|.*\/)\.env(?:\..*)?$/i.test(file) && !file.endsWith(".env.example")) {
+    errors.push(`Possível arquivo de credenciais rastreado pelo Git: ${file}`);
+  }
   if (forbiddenDocumentExtensions.has(extname(file).toLowerCase())) {
     errors.push(`Arquivo privado rastreado pelo Git: ${file}`);
   }
 }
 
-for (const file of trackedFiles.filter((name) => /\.(?:ts|tsx|js|jsx|mjs|cjs)$/i.test(name))) {
+for (const file of trackedFiles.filter((name) => /\.(?:ts|tsx|js|jsx|mjs|cjs|py)$/i.test(name))) {
   if (filesExcludedFromNetworkScan.has(file)) continue;
   const content = readFileSync(file, "utf8");
+  if (/\.test\.[jt]sx?$/.test(file) && /(?:\b\d{3}\.\d{3}\.\d{3}-\d{2}\b|\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\b)/.test(content)) {
+    errors.push(`Possível CPF ou CNPJ em arquivo de teste: ${file}`);
+  }
   for (const pattern of networkPatterns) {
     if (pattern.regex.test(content)) {
       errors.push(`Comunicação de rede não autorizada (${pattern.name}) em ${file}`);
@@ -52,4 +58,4 @@ if (errors.length > 0) {
   process.exit(1);
 }
 
-console.log("Verificação de privacidade concluída: nenhum arquivo privado ou envio de rede não autorizado foi encontrado.");
+console.log("Verificação de privacidade concluída: verificações automáticas concluídas. A revisão de dados fictícios e do histórico continua necessária.");

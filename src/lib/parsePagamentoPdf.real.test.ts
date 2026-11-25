@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parsePagamentoColumns, parsePagamentoLine } from "./parsePagamentoLine";
 
-describe("parser do relatório real do ERP", () => {
+describe("parser de relatório fictício do ERP", () => {
   it("ignora o código da empresa 00044 e lê o número completo do título", () => {
     const row = parsePagamentoLine(
       "00044 76543200004 FORNECEDOR EXEMPLO COMERCIAL LTDA 09/03/2026 09/03/2026 01/07/2026 02/07/2026 14.576,43 0,00 01/07/2026",
