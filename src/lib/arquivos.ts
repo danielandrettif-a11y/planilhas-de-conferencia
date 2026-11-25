@@ -28,3 +28,23 @@ export async function baixarPdf(file: File, paginas: number[], nome: string, val
     return true;
   } finally { bytes.fill(0); }
 }
+
+export type ArquivoZip = { nome: string; bytes: Uint8Array };
+
+/** Compacta apenas os arquivos já gerados, sem enviar dados pela rede. */
+export async function gerarZip(arquivos: ArquivoZip[]): Promise<Uint8Array> {
+  const JSZip = (await import("jszip")).default;
+  const zip = new JSZip();
+  for (const arquivo of arquivos) zip.file(arquivo.nome, arquivo.bytes);
+  return zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
+}
+
+export async function baixarZip(arquivos: ArquivoZip[], nome: string, valido: () => boolean): Promise<boolean> {
+  const bytes = await gerarZip(arquivos);
+  try {
+    if (!valido()) return false;
+    const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: "application/zip" }));
+    const link = document.createElement("a"); link.href = url; link.download = nome; link.click(); URL.revokeObjectURL(url);
+    return true;
+  } finally { bytes.fill(0); }
+}
