@@ -1,4 +1,5 @@
 import { baixarPdf, baixarZip, separarPdf, nomeArquivo, type ArquivoZip } from "@/lib/arquivos";
+import { SeletorEmpresas, PainelLote, useSelecaoEmpresas, resolverLote, baixarLote, type ItemLote } from "@/components/SelecaoEmpresas";
 import { useEffect, useRef, useState } from "react";
 import { modeloFolha } from "@/lib/modeloFolha";
 import { calcularFolha, codigoEfetivoFolha, lerFolha, type EmpresaFolha, type ResultadoFolha } from "@/lib/folha";
@@ -16,6 +17,8 @@ function ultimoDiaDoMes(competencia: string): string {
 }
 
 export default function FolhaPagamento() {
+  const selecao = useSelecaoEmpresas();
+  const [lote, setLote] = useState<ItemLote<{empresa:EmpresaFolha; calculo:ResultadoFolha}>[]>([]);
   const [empresa, setEmpresa] = useState("");
   const [competencia, setCompetencia] = useState("");
   const [competenciaDigitada, setCompetenciaDigitada] = useState("");
@@ -29,18 +32,31 @@ export default function FolhaPagamento() {
   const generation = useRef(0);
   const pdfOriginal = useRef<File | null>(null);
   useEffect(() => () => { controller.current?.abort(); generation.current++; }, []);
-  const invalidate = () => {controller.current?.abort();controller.current=null;generation.current++;pdfOriginal.current=null;setLoading(false);setResultado(null);setErro("");setBaixados([]);};
-  const reset = () => {controller.current?.abort();controller.current=null;generation.current++;pdfOriginal.current=null;setLoading(false);setEmpresa("");setCompetencia("");setCompetenciaDigitada("");setData("");setResultado(null);setErro("");setBaixados([]);};
+  const invalidate = () => {setLote([]);controller.current?.abort();controller.current=null;generation.current++;pdfOriginal.current=null;setLoading(false);setResultado(null);setErro("");setBaixados([]);};
+  const reset = () => {setLote([]);selecao.limparSelecao();controller.current?.abort();controller.current=null;generation.current++;pdfOriginal.current=null;setLoading(false);setEmpresa("");setCompetencia("");setCompetenciaDigitada("");setData("");setResultado(null);setErro("");setBaixados([]);};
   const processar = async (file:File) => {
     controller.current?.abort();
     const current = new AbortController();
     controller.current = current;
     generation.current++;
     pdfOriginal.current=null;
+    setLote([]);
     setResultado(null);setErro("");setBaixados([]);setLoading(true);
     try {
       const all=await lerFolha(file, current.signal);
       if (current.signal.aborted) return;
+      if (selecao.multipla) {
+        const itens = resolverLote(selecao.lista, all, e => {
+          const company = all.find(c => c.codigo === e.codigo)!;
+          if (company.competencia !== competencia) throw new Error("Competência incompatível com o PDF.");
+          if (company.errosLeitura.length) throw new Error(company.errosLeitura.join(" "));
+          if (company.liquido === null || !company.eventos.length) throw new Error("Relatório sem líquido ou eventos identificáveis.");
+          const calculo = calcularFolha(company);
+          if (calculo.diferenca !== 0 || calculo.pendentes.length) throw new Error(`Diferença: ${money(calculo.diferenca ?? 0)}; ${calculo.pendentes.length} evento(s) pendente(s). Revise individualmente.`);
+          return {empresa:company,calculo};
+        });
+        pdfOriginal.current=file;setLote(itens);return;
+      }
       const found=all.filter(e=> e.codigo===empresa.trim() || normalize(e.nome).includes(normalize(empresa)));
       if(found.length!==1) throw new Error(found.length ? `Mais de uma empresa encontrada (${found.map(e=>`${e.codigo} - ${e.nome}`).join("; ")}). Informe o código ou nome completo.` : "Empresa não encontrada. Confira o código ou nome informado.");
       const company=found[0];
@@ -51,13 +67,13 @@ export default function FolhaPagamento() {
       setResultado({empresa:company,calculo:calcularFolha(company)});
     } catch(e) {if (!current.signal.aborted) setErro(e instanceof Error?e.message:"Não foi possível ler o PDF.");} finally {if (controller.current === current) {controller.current=null;setLoading(false);}}
   };
-  const download = async (tipo:"importacao"|"conferencia", coletar = false): Promise<Uint8Array | undefined> => {
-    if(!resultado) return;
+  const download = async (tipo:"importacao"|"conferencia", coletar = false, resultadoSelecionado = resultado): Promise<Uint8Array | undefined> => {
+    if(!resultadoSelecionado) return;
     const version = generation.current;
     const ExcelJS = (await import("exceljs")).default;
     const wb=new ExcelJS.Workbook();
     wb.calcProperties.fullCalcOnLoad=true;
-    const {empresa:company, calculo}=resultado;
+    const {empresa:company, calculo}=resultadoSelecionado;
     const dateParts=data.split("-").map(Number); const date=new Date(dateParts[0],dateParts[1]-1,dateParts[2]);
     if(tipo==="importacao") {
       const sh=wb.addWorksheet("Planilha1");
@@ -183,22 +199,38 @@ export default function FolhaPagamento() {
     } catch (e) { if (version === generation.current) setErro(e instanceof Error ? e.message : "Não foi possível gerar o ZIP."); }
     finally { arquivos.forEach(a => a.bytes.fill(0)); setGerandoZip(false); }
   };
-  const ready=empresa.trim() && competencia && data;
+  const baixarTodas = async () => {
+    if (!pdfOriginal.current || gerandoZip) return;
+    const version = generation.current;
+    setGerandoZip(true);setErro("");
+    try {
+      if (await baixarLote("Folha", competencia, lote, pdfOriginal.current, r => r.empresa.paginas ?? [], async r => {
+        const arquivos: ArquivoZip[] = [];
+        try { for (const tipo of ["conferencia","importacao"] as const) {
+          const bytes = await download(tipo,true,r);if (!bytes) throw new Error("Geração cancelada.");
+          arquivos.push({nome:nomeArquivo("Folha",r.empresa.nome,competencia,"xlsx",tipo==="importacao"?"Importação":"Conferência"),bytes});
+        } return arquivos; } catch(e) { arquivos.forEach(a=>a.bytes.fill(0));throw e; }
+      }, () => version === generation.current)) reset();
+    } catch(e) {if(version===generation.current)setErro(e instanceof Error?e.message:"Não foi possível gerar o ZIP.");}
+    finally {setGerandoZip(false);}
+  };
+  const ready=(selecao.multipla ? selecao.lista.length>0 && !empresa.trim() : empresa.trim()) && competencia && data;
   const canExport=resultado && resultado.calculo.diferenca===0 && resultado.calculo.pendentes.length===0;
   return <section className="mx-auto max-w-4xl space-y-6">
     <div><p className="text-xs font-semibold uppercase tracking-widest text-primary">Lançamento</p><h1 className="mt-3 text-3xl font-semibold">Folha de pagamento</h1><p className="mt-2 text-muted-foreground">Informe os dados, depois selecione o PDF da folha.</p></div>
     <div className="grid gap-4 rounded-2xl border bg-card p-6 sm:grid-cols-2">
-      <label className="text-sm font-medium">Empresa (nome ou código)<input className={input} value={empresa} onChange={e=>{invalidate();setEmpresa(e.target.value);}} /></label>
+      <SeletorEmpresas empresa={empresa} setEmpresa={setEmpresa} selecao={selecao} invalidar={invalidate} inputClass={input} disabled={loading || gerandoZip} />
       <div><label className="text-sm font-medium">Competência<input className={input} type="text" inputMode="numeric" placeholder="MM/AAAA" maxLength={7} value={competenciaDigitada} aria-describedby="competencia-ajuda" aria-invalid={competenciaDigitada.length===7 && !competencia} onChange={e=>{const numeros=e.target.value.replace(/\D/g,"").slice(0,6);const exibicao=numeros.length>2?`${numeros.slice(0,2)}/${numeros.slice(2)}`:numeros;const mes=numeros.slice(0,2),ano=numeros.slice(2);const valido=numeros.length===6 && Number(mes)>=1 && Number(mes)<=12 && Number(ano)>0;const iso=valido?`${ano}-${mes}`:"";invalidate();setCompetenciaDigitada(exibicao);setCompetencia(iso);setData(ultimoDiaDoMes(iso));}} /></label><p id="competencia-ajuda" className={`mt-1 text-xs ${competenciaDigitada.length===7 && !competencia ? "text-destructive" : "text-muted-foreground"}`}>{competenciaDigitada.length===7 && !competencia ? "Informe um mês entre 01 e 12 e um ano válido." : "Digite o mês e o ano, por exemplo: 092026."}</p></div>
       <div><label className="text-sm font-medium">Data dos lançamentos<input className={input} type="date" value={data} onChange={e=>{invalidate();setData(e.target.value);}} /></label><span className="mt-1 block text-xs font-normal text-muted-foreground">Sugerimos o último dia da competência; você pode alterar.</span></div>
       <div className="sm:col-span-2">
-        <label className="block text-sm font-medium">PDF da folha<input aria-describedby="pdf-ajuda" className={input} type="file" accept=".pdf,application/pdf" disabled={!ready || loading} onChange={e=>{const file=e.target.files?.[0];e.target.value="";if(file && ready) void processar(file);}} /></label>
+        <label className="block text-sm font-medium">PDF da folha<input aria-describedby="pdf-ajuda" className={input} type="file" accept=".pdf,application/pdf" disabled={!ready || loading || gerandoZip} onChange={e=>{const file=e.target.files?.[0];e.target.value="";if(file && ready) void processar(file);}} /></label>
         <p id="pdf-ajuda" className="mt-2 text-xs text-muted-foreground">{!ready ? "Para anexar, informe a empresa, a competência e uma data válida." : "Selecione o PDF. Após a leitura, você poderá conferir e baixar as planilhas."}</p>
       </div>
       <p className="text-sm text-muted-foreground sm:col-span-2">Os dados ficam temporariamente nesta aba. Após baixar os três arquivos ou o ZIP, a tela é limpa. Os arquivos baixados permanecem no seu computador.</p>
       <button className="text-left text-sm text-muted-foreground underline" type="button" onClick={reset}>Limpar dados</button>
     </div>
     {loading && <p role="status">Lendo a folha...</p>}{erro && <p role="alert" className="rounded-xl bg-destructive/10 p-4 text-destructive">{erro}</p>}
+    {lote.length>0 && <PainelLote itens={lote} gerando={gerandoZip} baixar={()=>void baixarTodas()} />}
     {resultado && <div className="space-y-4 rounded-2xl border bg-card p-6"><h2 className="text-xl font-semibold">Conferência: {resultado.empresa.codigo} — {resultado.empresa.nome}</h2>
       <p>Líquido do PDF: <strong>{money(resultado.empresa.liquido!)}</strong></p><p>Líquido dos lançamentos: <strong>{money(resultado.calculo.liquidoCalculado)}</strong></p><p>Diferença: <strong>{money(resultado.calculo.diferenca!)}</strong></p>
       <p className={canExport?"text-primary":"text-destructive"}>{canExport?"Valores conferem.":"Não foi possível concluir com segurança. Revise os eventos e as diferenças."}</p>
