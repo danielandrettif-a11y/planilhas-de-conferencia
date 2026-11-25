@@ -1,4 +1,4 @@
-import { baixarPdf, nomeArquivo } from "@/lib/arquivos";
+import { baixarPdf, baixarZip, separarPdf, nomeArquivo, type ArquivoZip } from "@/lib/arquivos";
 import { useEffect, useRef, useState } from "react";
 import { modeloFolha } from "@/lib/modeloFolha";
 import { calcularFolha, codigoEfetivoFolha, lerFolha, type EmpresaFolha, type ResultadoFolha } from "@/lib/folha";
@@ -23,6 +23,7 @@ export default function FolhaPagamento() {
   const [resultado, setResultado] = useState<{empresa:EmpresaFolha; calculo:ResultadoFolha}|null>(null);
   const [erro, setErro] = useState("");
   const [loading, setLoading] = useState(false);
+  const [gerandoZip, setGerandoZip] = useState(false);
   const [baixados, setBaixados] = useState<string[]>([]);
   const controller = useRef<AbortController | null>(null);
   const generation = useRef(0);
@@ -50,7 +51,7 @@ export default function FolhaPagamento() {
       setResultado({empresa:company,calculo:calcularFolha(company)});
     } catch(e) {if (!current.signal.aborted) setErro(e instanceof Error?e.message:"Não foi possível ler o PDF.");} finally {if (controller.current === current) {controller.current=null;setLoading(false);}}
   };
-  const download = async (tipo:"importacao"|"conferencia") => {
+  const download = async (tipo:"importacao"|"conferencia", coletar = false): Promise<Uint8Array | undefined> => {
     if(!resultado) return;
     const version = generation.current;
     const ExcelJS = (await import("exceljs")).default;
@@ -152,6 +153,7 @@ export default function FolhaPagamento() {
     const dataBuffer = bytes as unknown as ArrayBuffer | Uint8Array;
     const clearBytes = () => { if (dataBuffer instanceof Uint8Array) dataBuffer.fill(0); else new Uint8Array(dataBuffer).fill(0); };
     if (version !== generation.current) { clearBytes(); return; }
+    if (coletar) return dataBuffer instanceof Uint8Array ? dataBuffer : new Uint8Array(dataBuffer);
     const url=URL.createObjectURL(new Blob([bytes],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}));
     clearBytes();
     const link=document.createElement("a");link.href=url;link.download=nomeArquivo("Folha",company.nome,competencia,"xlsx",tipo === "importacao" ? "Importação" : "Conferência");link.click();URL.revokeObjectURL(url);
@@ -165,6 +167,22 @@ export default function FolhaPagamento() {
       if (ok) { const next = [...new Set([...baixados, "pdf"])]; setBaixados(next); if (next.length === 3) reset(); }
     } catch (e) { if (version === generation.current) setErro(e instanceof Error ? e.message : "Não foi possível separar o PDF."); }
   };
+  const downloadZip = async () => {
+    if (!resultado || !pdfOriginal.current || resultado.calculo.diferenca !== 0 || resultado.calculo.pendentes.length || gerandoZip) return;
+    const version = generation.current, arquivos: ArquivoZip[] = [], company = resultado.empresa;
+    setGerandoZip(true); setErro("");
+    try {
+      arquivos.push({ nome: nomeArquivo("Folha", company.nome, competencia, "pdf"), bytes: await separarPdf(pdfOriginal.current, company.paginas ?? []) });
+      for (const tipo of ["conferencia", "importacao"] as const) {
+        if (version !== generation.current) return;
+        const bytes = await download(tipo, true);
+        if (!bytes) return;
+        arquivos.push({ nome: nomeArquivo("Folha", company.nome, competencia, "xlsx", tipo === "importacao" ? "Importação" : "Conferência"), bytes });
+      }
+      if (await baixarZip(arquivos, nomeArquivo("Folha", company.nome, competencia, "zip", "Todos os arquivos"), () => version === generation.current)) reset();
+    } catch (e) { if (version === generation.current) setErro(e instanceof Error ? e.message : "Não foi possível gerar o ZIP."); }
+    finally { arquivos.forEach(a => a.bytes.fill(0)); setGerandoZip(false); }
+  };
   const ready=empresa.trim() && competencia && data;
   const canExport=resultado && resultado.calculo.diferenca===0 && resultado.calculo.pendentes.length===0;
   return <section className="mx-auto max-w-4xl space-y-6">
@@ -177,7 +195,7 @@ export default function FolhaPagamento() {
         <label className="block text-sm font-medium">PDF da folha<input aria-describedby="pdf-ajuda" className={input} type="file" accept=".pdf,application/pdf" disabled={!ready || loading} onChange={e=>{const file=e.target.files?.[0];e.target.value="";if(file && ready) void processar(file);}} /></label>
         <p id="pdf-ajuda" className="mt-2 text-xs text-muted-foreground">{!ready ? "Para anexar, informe a empresa, a competência e uma data válida." : "Selecione o PDF. Após a leitura, você poderá conferir e baixar as planilhas."}</p>
       </div>
-      <p className="text-sm text-muted-foreground sm:col-span-2">Os dados ficam temporariamente nesta aba. Após os três downloads, a tela é limpa. Os arquivos baixados permanecem no seu computador.</p>
+      <p className="text-sm text-muted-foreground sm:col-span-2">Os dados ficam temporariamente nesta aba. Após baixar os três arquivos ou o ZIP, a tela é limpa. Os arquivos baixados permanecem no seu computador.</p>
       <button className="text-left text-sm text-muted-foreground underline" type="button" onClick={reset}>Limpar dados</button>
     </div>
     {loading && <p role="status">Lendo a folha...</p>}{erro && <p role="alert" className="rounded-xl bg-destructive/10 p-4 text-destructive">{erro}</p>}
@@ -186,8 +204,8 @@ export default function FolhaPagamento() {
       <p className={canExport?"text-primary":"text-destructive"}>{canExport?"Valores conferem.":"Não foi possível concluir com segurança. Revise os eventos e as diferenças."}</p>
       {resultado.calculo.pendentes.length>0 && <div><p className="font-semibold">Eventos sem classificação ({resultado.calculo.pendentes.length}):</p><ul className="list-disc pl-5 text-sm">{resultado.calculo.pendentes.map((e,i)=><li key={i}>{e.grupo} · {e.codigo} · CLC {e.clc || "ausente"} · {e.descricao} · {money(e.valor)} · página {e.pagina}</li>)}</ul></div>}
       <details><summary className="cursor-pointer text-sm">Eventos não lançados ({resultado.calculo.ignorados.length})</summary><ul className="list-disc pl-5 text-sm">{resultado.calculo.ignorados.map((e,i)=><li key={i}>{e.descricao} · CLC {e.clc || "ausente"} · {money(e.valor)}</li>)}</ul></details>
-      <p className="text-sm text-muted-foreground">Se houver pendências, você pode baixar a conferência para revisá-las. A importação só fica disponível quando a leitura e o líquido estiverem conferidos.</p>
-      <div className="flex flex-wrap gap-3"><button className={button} onClick={()=>void downloadPdf()}>Baixar PDF da empresa</button><button className={button} disabled={!canExport} onClick={()=>void download("importacao")}>Baixar importação</button><button className={button} onClick={()=>void download("conferencia")}>Baixar conferência</button></div>
+      <p className="text-sm text-muted-foreground">Se houver pendências, você pode baixar a conferência para revisá-las. A importação e o ZIP só ficam disponíveis quando a leitura e o líquido estiverem conferidos.</p>
+      <div className="flex flex-wrap gap-3"><button className={button} disabled={gerandoZip} onClick={()=>void downloadPdf()}>Baixar PDF da empresa</button><button className={button} disabled={!canExport || gerandoZip} onClick={()=>void download("importacao")}>Baixar importação</button><button className={button} disabled={gerandoZip} onClick={()=>void download("conferencia")}>Baixar conferência</button><button className={button} disabled={!canExport || gerandoZip} onClick={()=>void downloadZip()}>{gerandoZip ? "Gerando ZIP..." : "Baixar todos em ZIP"}</button></div>
     </div>}
   </section>;
 }
