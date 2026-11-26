@@ -1,7 +1,7 @@
 export type Celula = string | number | Date | null | undefined;
 export type Linha = Celula[];
 export type LancamentoFaturamento = {data:number; valor:number; debito:number|null; credito:number|null; doc:string; historico:string};
-export type ResultadoFaturamento = {pf:LancamentoFaturamento[]; pj:LancamentoFaturamento[]; divergencias:number};
+export type ResultadoFaturamento = {pf:LancamentoFaturamento[]; pj:LancamentoFaturamento[]; divergencias:number; datasAtipicas:string[]; abasPJ:number};
 
 const texto=(v:Celula)=>String(v??"").trim();
 const normal=(v:Celula)=>texto(v).normalize("NFD").replace(/[\u0300-\u036f]/g,"").toUpperCase().replace(/[^A-Z0-9]/g,"");
@@ -45,19 +45,20 @@ const regrasPJ=[
   {chave:"irpj",prefixo:"VALOR I.R.R.F. RETIDO NA FONTE"},
   {chave:"iss",prefixo:"VALOR DO I.S.S. Á RECUPERAR"},
   {chave:"taxas",prefixo:"VALOR REFERENTE TAXAS"},
+  {chave:"juros",prefixo:"VALOR RECEBIDO DE JUROS"},
   {chave:"liquido",prefixo:"VALOR RECEBIDO"},
 ] as const;
 type CampoPJ = typeof regrasPJ[number]["chave"]|"nome"|"doc"|"bruto"|"data"|"lei"|"guiaIss";
 // LEI e GUIA ISS A PAGAR são reconhecidas no layout, mas não geram lançamentos.
 const nomesPJ:Record<CampoPJ,string[]>={
   nome:["CONVENIO","CONVENIOS","RAZAOSOCIAL","EMPRESA"],doc:["NOTA","NOTAFISCAL","NF","NUMERONF","NUMERODANOTA"],
-  bruto:["BRUTODANF","BRUTONF","VALORBRUTO","VALORAPRES","VALORAPRESENTADO","VALORDA NF".replace(/ /g,""),"BRUTO"],
-  data:["DATA","DATAPAGAMENTO","DATADOPAGAMENTO","DATARECEBIMENTO","DIA"],
+  bruto:["BRUTODANF","BRUTONF","VALORBRUTO","VRBRUTO","VALORAPRES","VALORAPRESENTADO","VALORDA NF".replace(/ /g,""),"BRUTO"],
+  data:["DATA","DATAPAGAMENTO","DATADOPAGAMENTO","DATARECEBIMENTO","PAGAMENTO","DIA"],
   irf:["IRF","IRRF"],pis:["PIS"],cofins:["COFINS"],irpj:["IRPJ"],csll:["CSLL"],
-  iss:["ISS","ISSTX","ISSRETIDO"],taxas:["TAXAS","TAXA"],guiaIss:["GUIAISSAPAGAR","ISSAPAGAR"],
+  iss:["ISS","ISSTX","ISSRETIDO"],taxas:["TAXAS","TAXA"],juros:["JUROS","VALORJUROS","JUROSRECEBIDOS"],guiaIss:["GUIAISSAPAGAR","ISSAPAGAR"],
   liquido:["LIQREC","LIQUIDORECEBIDO","LIQUIDO","VALORLIQUIDO"],lei:["LEI","LEI10833","TOTALLEI10833","TOTALPCC"],
 };
-const nomesPF={debito:["DEB","DEBITO"],credito:["CRED","CREDITO"],valor:["VALOR"],data:["DIA","DATA"],historico:["COMPLEMENTOHISTORICO","HISTORICO"]};
+const nomesPF={debito:["DEB","DEBITO"],credito:["CRED","CREDITO"],valor:["VALOR"],data:["DIA","DATA"],historico:["COMPLEMENTOHISTORICO","HISTORICO","CONVENIO","CONVENIOS"]};
 type MapaPF=Record<keyof typeof nomesPF,number>;
 type MapaPJ=Partial<Record<CampoPJ,number>>;
 function mapear<T extends string>(linhas:Linha[], inicio:number, altura:number, aliases:Record<T,string[]>):Partial<Record<T,number>>|null{
@@ -81,10 +82,12 @@ function identificarPF(linhas:Linha[]){
   }
   throw new Error("Aba 1: cabeçalho de lançamentos não reconhecido.");
 }
-function identificarPJ(linhas:Linha[]){
-  for(let i=0;i<linhas.length;i++){
+function identificarPJ(linhas:Linha[],aba=2,inicio=0,apenasInicio=false){
+  for(let i=inicio;i<linhas.length&&(!apenasInicio||i===inicio);i++){
     for(const altura of [1,2]){
       if(i+altura>linhas.length)continue;
+      // Uma linha de dados não pode ser confundida com o início de cabeçalho.
+      if(altura===2&&linhas[i].filter(v=>typeof v==="number"||v instanceof Date).length>1)continue;
       const m=mapear(linhas,i,altura,nomesPJ);
       if(!m||m.nome===undefined||m.liquido===undefined||!["irf","pis","cofins","csll"].some(k=>m[k as CampoPJ]!==undefined))continue;
       // Compatibilidade com o primeiro modelo: títulos de NF, bruto e data
@@ -95,18 +98,27 @@ function identificarPJ(linhas:Linha[]){
       }
       if(m.doc===undefined||m.bruto===undefined||m.data===undefined)continue;
       if(new Set(Object.values(m)).size!==Object.values(m).length)continue;
-      return {fim:i+altura-1,mapa:m};
+      return {inicio:i,fim:i+altura-1,mapa:m};
     }
   }
-  throw new Error("Aba 2: cabeçalho de faturamento não reconhecido. Confira as colunas de convênio, NF, bruto, impostos, líquido e data.");
+  if(apenasInicio)return null;
+  throw new Error("Aba "+aba+": cabeçalho de faturamento não reconhecido. Confira as colunas de convênio, NF, bruto, impostos, líquido e data.");
 }
 export function localizarCabecalhos(primeira:Linha[],segunda:Linha[]):[number,number]{
-  return [identificarPF(primeira).fim,identificarPJ(segunda).fim];
+  return [identificarPF(primeira).fim,identificarPJ(segunda)!.fim];
 }
 export function converterFaturamento(primeira:Linha[],segunda:Linha[],base1904=false):ResultadoFaturamento{
-  const a=identificarPF(primeira),b=identificarPJ(segunda);
+  return converterAbasFaturamento([primeira,segunda],base1904);
+}
+
+/** Primeira aba: PF; demais abas preenchidas: tabelas de NF/PJ identificadas. */
+export function converterAbasFaturamento(abas:Linha[][],base1904=false):ResultadoFaturamento{
+  if(abas.length<2)throw new Error("Envie o modelo com pelo menos duas abas.");
+  const primeira=abas[0],a=identificarPF(primeira);
   const pf:LancamentoFaturamento[]=[],pj:LancamentoFaturamento[]=[];
-  let divergencias=0;
+  let divergencias=0,abasPJ=0;
+  const datasAtipicas:string[]=[];
+  const conferirData=(data:number,aba:number,linha:number)=>{if(data<36526)datasAtipicas.push("Aba "+aba+", linha "+linha);return data;};
   for(let i=a.fim+1;i<primeira.length;i++){
     const r=primeira[i],m=a.mapa;
     if(Number(r[m.debito])!==42||Number(r[m.credito])!==232)continue;
@@ -116,35 +128,48 @@ export function converterFaturamento(primeira:Linha[],segunda:Linha[],base1904=f
     const match=h.match(/^(.+?)\s+NF\s*[.:\-]?\s*(\d+)\s*\.?$/i);
     if(!match)throw falha(1,i+1,"nome ou nota fiscal da pessoa física não reconhecido.");
     const doc=match[2],nome=match[1].trim().toUpperCase();
-    pf.push({data:dataSerial(r[m.data],1,i+1,base1904),valor:valor/100,debito:42,credito:232,doc,historico:"VALOR RECEBIDO PESSOA FISICA "+nome+" NF "+doc});
+    pf.push({data:conferirData(dataSerial(r[m.data],1,i+1,base1904),1,i+1),valor:valor/100,debito:42,credito:232,doc,historico:"VALOR RECEBIDO PESSOA FISICA "+nome+" NF "+doc});
   }
-  for(let i=b.fim+1;i<segunda.length;i++){
-    const r=segunda[i],m=b.mapa;
+  for(let indice=1;indice<abas.length;indice++){
+    const segunda=abas[indice],aba=indice+1;
+    if(segunda.every(r=>r.every(vazio)))continue;
+    let b=identificarPJ(segunda,aba)!;
+    abasPJ++;
+    for(let i=b.fim+1;i<segunda.length;i++){
+    const r=segunda[i];
+    const repetido=identificarPJ(segunda,aba,i,true);
+    if(repetido){b=repetido;i=b.fim;continue;}
+    const m=b.mapa;
     const cel=(k:CampoPJ):Celula=>m[k]===undefined?undefined:r[m[k]!];
     const nome=texto(cel("nome")),doc=texto(cel("doc")).toUpperCase();
     if(vazio(cel("doc"))&&vazio(cel("data"))&&/^(VALORGERAL|TOTAL|TOTALGERAL|SUBTOTAL)$/.test(normal(nome)))continue;
     const temValores=regrasPJ.some(regra=>!vazio(cel(regra.chave)));
+    // Títulos de seção sem valores, NF ou data não são lançamentos.
+    if(!temValores&&vazio(cel("data"))&&vazio(cel("bruto"))&&(vazio(cel("doc"))||["NOTA","FISCAL","NOTAFISCAL"].includes(normal(cel("doc")))))continue;
     if(!temValores&&vazio(cel("data"))&&vazio(cel("bruto"))&&(!nome||normal(nome)==="LEI10833"))continue;
     if(!nome&&!temValores&&vazio(cel("data")))continue;
     if(r.every(vazio))continue;
-    if(!nome||!doc||vazio(cel("data")))throw falha(2,i+1,"registro incompleto; confira convênio, nota fiscal e data.");
-    if(!/^(?:\d+|S\/N|S\/NF|C\/NF)$/.test(doc))throw falha(2,i+1,"identificação de nota fiscal não reconhecida.");
-    const data=dataSerial(cel("data"),2,i+1,base1904);
+    if(!nome||!doc||vazio(cel("data")))throw falha(aba,i+1,"registro incompleto; confira convênio, nota fiscal e data.");
+    if(!/^(?:\d+|S\/N|S\/NF|C\/NF)$/.test(doc))throw falha(aba,i+1,"identificação de nota fiscal não reconhecida.");
+    const data=conferirData(dataSerial(cel("data"),aba,i+1,base1904),aba,i+1);
     const nota=/^\d+$/.test(doc)?"NF "+doc:doc;
     let soma=0,pcc=0;
     for(const regra of regrasPJ){
-      const valor=centavos(cel(regra.chave),2,i+1);
-      soma+=valor;
+      const valor=centavos(cel(regra.chave),aba,i+1);
+      // Juros recebidos acrescem o líquido, em vez de reduzi-lo.
+      soma+=regra.chave==="juros"?-valor:valor;
       if(["pis","cofins","csll"].includes(regra.chave))pcc+=valor;
       if(!valor)continue;
       pj.push({data,valor:valor/100,debito:null,credito:null,doc,historico:regra.prefixo+" "+nota+" DO CONVÊNIO "+nome.toUpperCase()+" REFERENTE SERVIÇOS PRESTADOS."});
     }
-    if((!vazio(cel("bruto"))&&centavos(cel("bruto"),2,i+1)!==soma)||(!vazio(cel("lei"))&&centavos(cel("lei"),2,i+1)!==pcc))divergencias++;
+    if((!vazio(cel("bruto"))&&centavos(cel("bruto"),aba,i+1)!==soma)||(!vazio(cel("lei"))&&centavos(cel("lei"),aba,i+1)!==pcc))divergencias++;
     // Colunas numéricas desconhecidas não são descartadas silenciosamente,
     // exceto as auxiliares após a última coluna identificada no modelo.
     const conhecidas=new Set(Object.values(m)),ultima=Math.max(...conhecidas);
-    for(let c=0;c<=ultima;c++)if(!conhecidas.has(c)&&typeof r[c]==="number"&&r[c]!==0)throw falha(2,i+1,"coluna de valor não reconhecida no modelo.");
+    for(let c=0;c<=ultima;c++)if(!conhecidas.has(c)&&typeof r[c]==="number"&&r[c]!==0)throw falha(aba,i+1,"coluna de valor não reconhecida no modelo.");
   }
+  }
+  if(!abasPJ)throw new Error("Nenhuma aba de faturamento PJ identificada.");
   if(!pf.length&&!pj.length)throw new Error("Nenhum lançamento identificado.");
-  return {pf,pj,divergencias};
+  return {pf,pj,divergencias,datasAtipicas,abasPJ};
 }
