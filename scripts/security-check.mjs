@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { extname } from "node:path";
 
 const forbiddenDocumentExtensions = new Set([
-  ".xlsx", ".xls", ".xlsm", ".xlsb", ".csv", ".pdf", ".zip", ".rar", ".7z",
+  ".xlsx", ".xls", ".xlsm", ".xlsb", ".ods", ".ots", ".csv", ".pdf", ".zip", ".rar", ".7z",
 ]);
 
 const filesExcludedFromNetworkScan = new Set([
