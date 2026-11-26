@@ -1,5 +1,5 @@
 import {useEffect,useRef,useState} from "react";
-import {converterFaturamento,type Linha,type LancamentoFaturamento} from "@/lib/faturamento";
+import {converterAbasFaturamento,type Linha,type LancamentoFaturamento} from "@/lib/faturamento";
 
 const botao="rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground disabled:opacity-50";
 export default function Faturamento(){
@@ -18,17 +18,16 @@ export default function Faturamento(){
     const v=++versao.current;
     setOcupado(true);setErro("");setStatus("");
     let entrada:Uint8Array|undefined,saida:Uint8Array|undefined;
-    let primeira:Linha[]=[],segunda:Linha[]=[];
-    let resultado:ReturnType<typeof converterFaturamento>|undefined;
+    let abas:Linha[][]=[];
+    let resultado:ReturnType<typeof converterAbasFaturamento>|undefined;
     try{
       const XLSX=await import("xlsx");
       entrada=new Uint8Array(await arquivo.arrayBuffer());
       if(v!==versao.current)return;
       const origem=XLSX.read(entrada,{type:"array",cellDates:false,cellFormula:false,cellHTML:false,cellNF:false,cellText:false});
-      if(origem.SheetNames.length!==2)throw new Error("Envie o modelo com exatamente duas abas.");
-      primeira=XLSX.utils.sheet_to_json<Linha>(origem.Sheets[origem.SheetNames[0]],{header:1,raw:true,blankrows:true});
-      segunda=XLSX.utils.sheet_to_json<Linha>(origem.Sheets[origem.SheetNames[1]],{header:1,raw:true,blankrows:true});
-      resultado=converterFaturamento(primeira,segunda,!!origem.Workbook?.WBProps?.date1904);
+      if(origem.SheetNames.length<2)throw new Error("Envie o modelo com pelo menos duas abas.");
+      abas=origem.SheetNames.map(nome=>XLSX.utils.sheet_to_json<Linha>(origem.Sheets[nome],{header:1,raw:true,blankrows:true}));
+      resultado=converterAbasFaturamento(abas,!!origem.Workbook?.WBProps?.date1904);
       const ExcelJS=(await import("exceljs")).default;
       if(v!==versao.current)return;
       const wb=new ExcelJS.Workbook();
@@ -50,19 +49,19 @@ export default function Faturamento(){
       link.href=url;link.download="Faturamento - Importacao.xlsx";
       document.body.appendChild(link);
       try{link.click();}finally{link.remove();const timer=setTimeout(()=>{URL.revokeObjectURL(url);urls.current.delete(url);timers.current.delete(timer);},1000);timers.current.add(timer);}
-      setStatus("Download iniciado: "+resultado.pf.length+" lançamento(s) PF e "+resultado.pj.length+" PJ. "+(resultado.divergencias?resultado.divergencias+" nota(s) com diferença entre bruto e soma dos valores; confira os valores originais. ":"")+"Complete as contas de PJ antes de importar.");
+      setStatus("Download iniciado: "+resultado.pf.length+" lançamento(s) PF e "+resultado.pj.length+" PJ. "+(resultado.divergencias?resultado.divergencias+" nota(s) com diferença entre bruto e soma dos valores; confira os valores originais. ":"")+(resultado.datasAtipicas.length?"Datas atípicas preservadas: "+resultado.datasAtipicas.join("; ")+". Confira antes de importar. ":"")+"Complete as contas de PJ antes de importar.");
     }catch(e){
       if(v===versao.current)setErro(e instanceof Error&&/^(Aba \d|As duas abas|Envie o modelo|Nenhum lançamento)/.test(e.message)?e.message:"Não foi possível processar a planilha. Confira o formato e tente novamente.");
     }finally{
       entrada?.fill(0);saida?.fill(0);
-      primeira.forEach(r=>r.fill(null));segunda.forEach(r=>r.fill(null));
-      primeira=[];segunda=[];
-      if(resultado){resultado.pf.length=0;resultado.pj.length=0;}
+      abas.forEach(aba=>aba.forEach(r=>r.fill(null)));
+      abas=[];
+      if(resultado){resultado.pf.length=0;resultado.pj.length=0;resultado.datasAtipicas.length=0;}
       if(v===versao.current){setArquivo(null);setOcupado(false);if(campo.current)campo.current.value="";}
     }
   };
   return <section className="space-y-6">
-    <div><p className="text-xs font-semibold uppercase tracking-widest text-primary">Lançamento</p><h1 className="mt-3 text-3xl font-semibold">Faturamento</h1><p className="mt-2 text-muted-foreground">Converta as duas abas do relatório em uma planilha de importação para o Alterdata.</p></div>
+    <div><p className="text-xs font-semibold uppercase tracking-widest text-primary">Lançamento</p><h1 className="mt-3 text-3xl font-semibold">Faturamento</h1><p className="mt-2 text-muted-foreground">Converta as abas do relatório em uma planilha de importação para o Alterdata.</p></div>
     <div className="space-y-4 rounded-2xl border bg-card p-6">
       <label className="block text-sm font-medium">Planilha bruta (.xlsx, .xls ou .ods)<input ref={campo} type="file" accept=".xlsx,.xls,.ods" disabled={ocupado} className="mt-2 block w-full rounded-lg border border-input bg-background p-3" onChange={e=>{setArquivo(e.target.files?.[0]??null);setErro("");setStatus("");}}/></label>
       <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm"><strong>ATENÇÃO — antes de importar:</strong> preencha as contas de débito e crédito de todos os lançamentos de pessoas jurídicas e impostos conforme o plano de contas da empresa. Exclua a linha em branco entre PF e PJ se o importador exigir. Confira também as notas e os valores.</div>
