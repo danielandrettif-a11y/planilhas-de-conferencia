@@ -50,7 +50,7 @@ export default function Faturamento(){
       link.href=url;link.download="Faturamento - Importacao.xlsx";
       document.body.appendChild(link);
       try{link.click();}finally{link.remove();const timer=setTimeout(()=>{URL.revokeObjectURL(url);urls.current.delete(url);timers.current.delete(timer);},1000);timers.current.add(timer);}
-      setStatus("Download iniciado: "+resultado.pf.length+" lançamento(s) PF e "+resultado.pj.length+" PJ. "+(resultado.divergencias?resultado.divergencias+" nota(s) com diferença entre bruto e soma dos valores; confira os valores originais. ":"")+"Complete as contas de PJ antes de importar.");
+      setStatus((resultado.guiasIss?"Atenção: "+resultado.guiasIss+" lançamento(s) de guia ISS a pagar incluído(s) separadamente; confira o tratamento contábil. ":"")+"Download iniciado: "+resultado.pf.length+" lançamento(s) PF e "+resultado.pj.length+" PJ. "+(resultado.divergencias?resultado.divergencias+" nota(s) com diferença entre bruto e soma dos valores; confira os valores originais. ":"")+"Complete as contas de PJ antes de importar.");
     }catch(e){
       if(v===versao.current)setErro(e instanceof Error&&/^(Aba \d|As duas abas|Envie o modelo|Nenhum lançamento)/.test(e.message)?e.message:"Não foi possível processar a planilha. Confira o formato e tente novamente.");
     }finally{
