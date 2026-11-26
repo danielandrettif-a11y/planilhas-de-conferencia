@@ -51,7 +51,7 @@ const regrasPJ=[
 type CampoPJ = typeof regrasPJ[number]["chave"]|"nome"|"doc"|"bruto"|"data"|"lei"|"guiaIss";
 // LEI e GUIA ISS A PAGAR são reconhecidas no layout, mas não geram lançamentos.
 const nomesPJ:Record<CampoPJ,string[]>={
-  nome:["CONVENIO","CONVENIOS","RAZAOSOCIAL","EMPRESA"],doc:["NOTA","NOTAFISCAL","NF","NUMERONF","NUMERODANOTA"],
+  nome:["CONVENIO","CONVENIOS","RAZAOSOCIAL","EMPRESA"],doc:["NOTA","FISCAL","NOTAFISCAL","NF","NUMERONF","NUMERODANOTA"],
   bruto:["BRUTODANF","BRUTONF","VALORBRUTO","VRBRUTO","VALORAPRES","VALORAPRESENTADO","VALORDA NF".replace(/ /g,""),"BRUTO"],
   data:["DATA","DATAPAGAMENTO","DATADOPAGAMENTO","DATARECEBIMENTO","PAGAMENTO","DIA"],
   irf:["IRF","IRRF"],pis:["PIS"],cofins:["COFINS"],irpj:["IRPJ"],csll:["CSLL"],
@@ -87,7 +87,7 @@ function identificarPJ(linhas:Linha[],aba=2,inicio=0,apenasInicio=false){
     for(const altura of [1,2]){
       if(i+altura>linhas.length)continue;
       // Uma linha de dados não pode ser confundida com o início de cabeçalho.
-      if(altura===2&&linhas[i].filter(v=>typeof v==="number"||v instanceof Date).length>1)continue;
+      if(altura===2&&(linhas[i].filter(v=>typeof v==="number"||v instanceof Date).length>1||linhas[i+1].filter(v=>typeof v==="number"||v instanceof Date).length>1))continue;
       const m=mapear(linhas,i,altura,nomesPJ);
       if(!m||m.nome===undefined||m.liquido===undefined||!["irf","pis","cofins","csll"].some(k=>m[k as CampoPJ]!==undefined))continue;
       // Compatibilidade com o primeiro modelo: títulos de NF, bruto e data
