@@ -1,7 +1,7 @@
 export type Celula = string | number | Date | null | undefined;
 export type Linha = Celula[];
-export type LancamentoFaturamento = {data:number; valor:number; debito:number|null; credito:number|null; doc:string; historico:string};
-export type ResultadoFaturamento = {pf:LancamentoFaturamento[]; pj:LancamentoFaturamento[]; divergencias:number; datasAtipicas:string[]; abasPJ:number};
+export type LancamentoFaturamento = {data:number; valor:number; debito:number|null; credito:number|null; doc:string; historico:string; avisoData?:string; avisoRevisao?:string};
+export type ResultadoFaturamento = {pf:LancamentoFaturamento[]; pj:LancamentoFaturamento[]; divergencias:number; datasAtipicas:string[]; abasPJ:number; duplicadosPrimeira:number; adicionaisPrimeira:number};
 
 const texto=(v:Celula)=>String(v??"").trim();
 const normal=(v:Celula)=>texto(v).normalize("NFD").replace(/[\u0300-\u036f]/g,"").toUpperCase().replace(/[^A-Z0-9]/g,"");
@@ -116,19 +116,30 @@ export function converterAbasFaturamento(abas:Linha[][],base1904=false):Resultad
   if(abas.length<2)throw new Error("Envie o modelo com pelo menos duas abas.");
   const primeira=abas[0],a=identificarPF(primeira);
   const pf:LancamentoFaturamento[]=[],pj:LancamentoFaturamento[]=[];
-  let divergencias=0,abasPJ=0;
+  let divergencias=0,abasPJ=0,duplicadosPrimeira=0,adicionaisPrimeira=0;
+  const pendentes:{data:number;valor:number;doc:string;nome:string;historico:string;linha:number}[]=[];
+  const candidatos:{data:number;valor:number;doc:string;nome:string;chave:string;usado:boolean}[]=[];
+  const nomeComparavel=(v:string)=>v.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().split(/[^A-Z0-9]+/).filter(t=>t&&!['DE','DA','DO','DAS','DOS'].includes(t)).join('');
+  const docComparavel=(v:string)=>v.replace(/^0+(?=\d)/,'');
   const datasAtipicas:string[]=[];
   const conferirData=(data:number,aba:number,linha:number)=>{if(data<36526)datasAtipicas.push("Aba "+aba+", linha "+linha);return data;};
   for(let i=a.fim+1;i<primeira.length;i++){
     const r=primeira[i],m=a.mapa;
-    if(Number(r[m.debito])!==42||Number(r[m.credito])!==232)continue;
+    const debito=Number(r[m.debito]),credito=Number(r[m.credito]);
+    if(debito!==42||![232,1715].includes(credito))continue;
     const valor=centavos(r[m.valor],1,i+1);
     if(!valor)continue;
     const h=texto(r[m.historico]).replace(/^VALOR RECEBIDO PESSOA F[IÍ]SICA\s+/i,"");
-    const match=h.match(/^(.+?)\s+NF\s*[.:\-]?\s*(\d+)\s*\.?$/i);
+    const match=h.match(/^(.+?)\s+N\s*\.?\s*F\s*[.:\-]?\s*(\d+)\s*\.?$/i);
+    if(credito===1715){
+      if(!h)throw falha(1,i+1,"histórico ausente no lançamento a conferir.");
+      pendentes.push({data:dataSerial(r[m.data],1,i+1,base1904),valor,doc:match?.[2]??"",nome:match?.[1]??h,historico:texto(r[m.historico]),linha:i+1});
+      continue;
+    }
     if(!match)throw falha(1,i+1,"nome ou nota fiscal da pessoa física não reconhecido.");
     const doc=match[2],nome=match[1].trim().toUpperCase();
-    pf.push({data:conferirData(dataSerial(r[m.data],1,i+1,base1904),1,i+1),valor:valor/100,debito:42,credito:232,doc,historico:"VALOR RECEBIDO PESSOA FISICA "+nome+" NF "+doc});
+    const data=conferirData(dataSerial(r[m.data],1,i+1,base1904),1,i+1);
+    pf.push({data,valor:valor/100,debito:42,credito:232,doc,historico:"VALOR RECEBIDO PESSOA FISICA "+nome+" NF "+doc,...(data<36526?{avisoData:"Data atípica — confira aba 1, linha "+(i+1)+" do arquivo original."}:{})});
   }
   for(let indice=1;indice<abas.length;indice++){
     const segunda=abas[indice],aba=indice+1;
@@ -160,7 +171,8 @@ export function converterAbasFaturamento(abas:Linha[][],base1904=false):Resultad
       soma+=regra.chave==="juros"?-valor:valor;
       if(["pis","cofins","csll"].includes(regra.chave))pcc+=valor;
       if(!valor)continue;
-      pj.push({data,valor:valor/100,debito:null,credito:null,doc,historico:regra.prefixo+" "+nota+" DO CONVÊNIO "+nome.toUpperCase()+" REFERENTE SERVIÇOS PRESTADOS."});
+      if(regra.chave==="juros"||regra.chave==="liquido")candidatos.push({data,valor,doc,nome,chave:regra.chave,usado:false});
+      pj.push({data,valor:valor/100,debito:null,credito:null,doc,historico:regra.prefixo+" "+nota+" DO CONVÊNIO "+nome.toUpperCase()+" REFERENTE SERVIÇOS PRESTADOS.",...(data<36526?{avisoData:"Data atípica — confira aba "+aba+", linha "+(i+1)+" do arquivo original."}:{})});
     }
     if((!vazio(cel("bruto"))&&centavos(cel("bruto"),aba,i+1)!==soma)||(!vazio(cel("lei"))&&centavos(cel("lei"),aba,i+1)!==pcc))divergencias++;
     // Colunas numéricas desconhecidas não são descartadas silenciosamente,
@@ -170,6 +182,15 @@ export function converterAbasFaturamento(abas:Linha[][],base1904=false):Resultad
   }
   }
   if(!abasPJ)throw new Error("Nenhuma aba de faturamento PJ identificada.");
+  // Com NF: coincidência de nota, data e valor; sem NF: somente nome normalizado, data e valor de recebimento sem NF.
+  // Consome cada correspondência uma única vez. Ambiguidades são mantidas para revisão, nunca descartadas.
+  for(const p of pendentes){
+    const encontrados=candidatos.filter(c=>!c.usado&&c.data===p.data&&c.valor===p.valor&&(p.doc?(/^\d+$/.test(c.doc)&&docComparavel(c.doc)===docComparavel(p.doc)):(c.chave==="liquido"&&/^(S\/N|S\/NF|C\/NF)$/.test(c.doc)&&nomeComparavel(c.nome)===nomeComparavel(p.nome))));
+    if(encontrados.length===1){encontrados[0].usado=true;duplicadosPrimeira++;continue;}
+    adicionaisPrimeira++;
+    const data=conferirData(p.data,1,p.linha);
+    pj.push({data,valor:p.valor/100,debito:null,credito:null,doc:p.doc,historico:p.historico,avisoRevisao:"Aba 1, linha "+p.linha+": "+(encontrados.length?"mais de uma correspondência possível":"sem correspondência individual confirmada")+"; confira se o valor já está incluído em outro lançamento ou total.",...(data<36526?{avisoData:"Data atípica — confira aba 1, linha "+p.linha+" do arquivo original."}:{})});
+  }
   if(!pf.length&&!pj.length)throw new Error("Nenhum lançamento identificado.");
-  return {pf,pj,divergencias,datasAtipicas,abasPJ};
+  return {pf,pj,divergencias,datasAtipicas,abasPJ,duplicadosPrimeira,adicionaisPrimeira};
 }
