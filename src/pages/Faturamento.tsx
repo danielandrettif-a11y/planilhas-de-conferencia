@@ -33,10 +33,27 @@ export default function Faturamento(){
       const wb=new ExcelJS.Workbook();
       const sh=wb.addWorksheet("Planilha1");
       sh.addRow(["DATA","VALOR","DEBITO","CREDITO","Doc","HISTORICO"]);
-      const inserir=(r:LancamentoFaturamento)=>sh.addRow([r.data,r.valor,r.debito,r.credito,r.doc,r.historico]);
+      const inserir=(r:LancamentoFaturamento)=>{
+        const linha=sh.addRow([r.data,r.valor,r.debito,r.credito,r.doc,r.historico]);
+        const vermelho={color:{argb:"FFC00000"},bold:true};
+        if(r.avisoData){
+          linha.getCell(1).font=vermelho;
+          linha.getCell(1).fill={type:"pattern",pattern:"solid",fgColor:{argb:"FFFFE5E5"}};
+          linha.getCell(1).note=r.avisoData;
+        }
+        if(r.avisoRevisao){
+          linha.getCell(6).font=vermelho;
+          linha.getCell(6).note=r.avisoRevisao;
+        }
+      };
       resultado.pf.forEach(inserir);
       if(resultado.pf.length&&resultado.pj.length)sh.addRow([]);
       resultado.pj.forEach(inserir);
+      if(resultado.datasAtipicas.length||resultado.adicionaisPrimeira){
+        sh.addRow([]);
+        if(resultado.datasAtipicas.length){const aviso=sh.addRow(["","","","","","ATENÇÃO: confira as datas em vermelho antes de importar. Origem: "+resultado.datasAtipicas.join("; ")+". Exclua esta linha de aviso."]);aviso.getCell(6).font={color:{argb:"FFC00000"},bold:true};aviso.getCell(6).alignment={wrapText:true};aviso.height=42;}
+        if(resultado.adicionaisPrimeira){const aviso=sh.addRow(["","","","","","ATENÇÃO: confira os históricos em vermelho da primeira aba; podem corresponder a valores agrupados. Exclua esta linha de aviso antes de importar."]);aviso.getCell(6).font={color:{argb:"FFC00000"},bold:true};aviso.getCell(6).alignment={wrapText:true};aviso.height=42;}
+      }
       sh.getColumn(1).numFmt="dd/mm/yyyy";
       sh.getColumn(2).numFmt="#,##0.00";
       sh.getColumn(5).numFmt="@";
@@ -49,7 +66,7 @@ export default function Faturamento(){
       link.href=url;link.download="Faturamento - Importacao.xlsx";
       document.body.appendChild(link);
       try{link.click();}finally{link.remove();const timer=setTimeout(()=>{URL.revokeObjectURL(url);urls.current.delete(url);timers.current.delete(timer);},1000);timers.current.add(timer);}
-      setStatus("Download iniciado: "+resultado.pf.length+" lançamento(s) PF e "+resultado.pj.length+" PJ. "+(resultado.divergencias?resultado.divergencias+" nota(s) com diferença entre bruto e soma dos valores; confira os valores originais. ":"")+(resultado.datasAtipicas.length?"Datas atípicas preservadas: "+resultado.datasAtipicas.join("; ")+". Confira antes de importar. ":"")+"Complete as contas de PJ antes de importar.");
+      setStatus("Download iniciado: "+resultado.pf.length+" lançamento(s) PF e "+resultado.pj.length+" PJ. "+(resultado.divergencias?resultado.divergencias+" nota(s) com diferença entre bruto e soma dos valores; confira os valores originais. ":"")+(resultado.datasAtipicas.length?"Datas atípicas preservadas: "+resultado.datasAtipicas.join("; ")+". Confira antes de importar. ":"")+"Conferência da primeira aba: "+resultado.duplicadosPrimeira+" correspondência(s) já contemplada(s), "+resultado.adicionaisPrimeira+" lançamento(s) adicional(is) para revisão. Complete as contas de PJ e exclua as linhas de aviso antes de importar.");
     }catch(e){
       if(v===versao.current)setErro(e instanceof Error&&/^(Aba \d|As duas abas|Envie o modelo|Nenhum lançamento)/.test(e.message)?e.message:"Não foi possível processar a planilha. Confira o formato e tente novamente.");
     }finally{
