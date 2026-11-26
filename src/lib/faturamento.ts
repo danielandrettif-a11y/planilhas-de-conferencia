@@ -1,7 +1,7 @@
 export type Celula = string | number | Date | null | undefined;
 export type Linha = Celula[];
 export type LancamentoFaturamento = {data:number; valor:number; debito:number|null; credito:number|null; doc:string; historico:string};
-export type ResultadoFaturamento = {pf:LancamentoFaturamento[]; pj:LancamentoFaturamento[]; divergencias:number; guiasIss:number};
+export type ResultadoFaturamento = {pf:LancamentoFaturamento[]; pj:LancamentoFaturamento[]; divergencias:number};
 
 const texto=(v:Celula)=>String(v??"").trim();
 const normal=(v:Celula)=>texto(v).normalize("NFD").replace(/[\u0300-\u036f]/g,"").toUpperCase().replace(/[^A-Z0-9]/g,"");
@@ -45,10 +45,10 @@ const regrasPJ=[
   {chave:"irpj",prefixo:"VALOR I.R.R.F. RETIDO NA FONTE"},
   {chave:"iss",prefixo:"VALOR DO I.S.S. Á RECUPERAR"},
   {chave:"taxas",prefixo:"VALOR REFERENTE TAXAS"},
-  {chave:"guiaIss",prefixo:"VALOR DO I.S.S. A PAGAR"},
   {chave:"liquido",prefixo:"VALOR RECEBIDO"},
 ] as const;
-type CampoPJ = typeof regrasPJ[number]["chave"]|"nome"|"doc"|"bruto"|"data"|"lei";
+type CampoPJ = typeof regrasPJ[number]["chave"]|"nome"|"doc"|"bruto"|"data"|"lei"|"guiaIss";
+// LEI e GUIA ISS A PAGAR são reconhecidas no layout, mas não geram lançamentos.
 const nomesPJ:Record<CampoPJ,string[]>={
   nome:["CONVENIO","CONVENIOS","RAZAOSOCIAL","EMPRESA"],doc:["NOTA","NOTAFISCAL","NF","NUMERONF","NUMERODANOTA"],
   bruto:["BRUTODANF","BRUTONF","VALORBRUTO","VALORAPRES","VALORAPRESENTADO","VALORDA NF".replace(/ /g,""),"BRUTO"],
@@ -106,7 +106,7 @@ export function localizarCabecalhos(primeira:Linha[],segunda:Linha[]):[number,nu
 export function converterFaturamento(primeira:Linha[],segunda:Linha[],base1904=false):ResultadoFaturamento{
   const a=identificarPF(primeira),b=identificarPJ(segunda);
   const pf:LancamentoFaturamento[]=[],pj:LancamentoFaturamento[]=[];
-  let divergencias=0,guiasIss=0;
+  let divergencias=0;
   for(let i=a.fim+1;i<primeira.length;i++){
     const r=primeira[i],m=a.mapa;
     if(Number(r[m.debito])!==42||Number(r[m.credito])!==232)continue;
@@ -134,11 +134,9 @@ export function converterFaturamento(primeira:Linha[],segunda:Linha[],base1904=f
     let soma=0,pcc=0;
     for(const regra of regrasPJ){
       const valor=centavos(cel(regra.chave),2,i+1);
-      // Guia ISS a pagar é obrigação separada, não retenção do recebimento.
-      if(regra.chave!=="guiaIss")soma+=valor;
+      soma+=valor;
       if(["pis","cofins","csll"].includes(regra.chave))pcc+=valor;
       if(!valor)continue;
-      if(regra.chave==="guiaIss")guiasIss++;
       pj.push({data,valor:valor/100,debito:null,credito:null,doc,historico:regra.prefixo+" "+nota+" DO CONVÊNIO "+nome.toUpperCase()+" REFERENTE SERVIÇOS PRESTADOS."});
     }
     if((!vazio(cel("bruto"))&&centavos(cel("bruto"),2,i+1)!==soma)||(!vazio(cel("lei"))&&centavos(cel("lei"),2,i+1)!==pcc))divergencias++;
@@ -148,5 +146,5 @@ export function converterFaturamento(primeira:Linha[],segunda:Linha[],base1904=f
     for(let c=0;c<=ultima;c++)if(!conhecidas.has(c)&&typeof r[c]==="number"&&r[c]!==0)throw falha(2,i+1,"coluna de valor não reconhecida no modelo.");
   }
   if(!pf.length&&!pj.length)throw new Error("Nenhum lançamento identificado.");
-  return {pf,pj,divergencias,guiasIss};
+  return {pf,pj,divergencias};
 }
