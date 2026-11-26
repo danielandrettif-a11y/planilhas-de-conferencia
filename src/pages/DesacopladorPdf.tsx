@@ -61,7 +61,7 @@ export default function DesacopladorPdf(){
     try{
       if(nomes.length===1){await baixarPdf(file,nomes[0].paginas,nomePdf(nomes[0].alias),()=>v===versao.current);}
       else{
-        for(const n of nomes){if(v!==versao.current)return;setProgresso("Separando "+n.alias);const nome=nomePdf(n.alias);arquivos.push({nome:n.alias+"/"+nome,bytes:await separarPdf(file,n.paginas)});}
+        for(const n of nomes){if(v!==versao.current)return;setProgresso("Separando "+n.alias);const nome=nomePdf(n.alias);arquivos.push({nome,bytes:await separarPdf(file,n.paginas)});}
         await baixarZip(arquivos,"PDFs por empresa.zip",()=>v===versao.current);
       }
       if(v===versao.current)limpar();
