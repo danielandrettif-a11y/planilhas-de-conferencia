@@ -1,6 +1,6 @@
 export type Celula = string | number | Date | null | undefined;
 export type Linha = Celula[];
-export type LancamentoFaturamento = {data:number; valor:number; debito:number|null; credito:number|null; doc:string; historico:string; avisoData?:string; avisoRevisao?:string};
+export type LancamentoFaturamento = {data:number; valor:number; debito:number|null; credito:number|null; doc:string; historico:string; avisoData?:string; avisoRevisao?:string; cliente?:string; natureza?:string};
 export type ResultadoFaturamento = {pf:LancamentoFaturamento[]; pj:LancamentoFaturamento[]; divergencias:number; datasAtipicas:string[]; abasPJ:number; duplicadosPrimeira:number; adicionaisPrimeira:number};
 
 const texto=(v:Celula)=>String(v??"").trim();
@@ -172,7 +172,7 @@ export function converterAbasFaturamento(abas:Linha[][],base1904=false):Resultad
       if(["pis","cofins","csll"].includes(regra.chave))pcc+=valor;
       if(!valor)continue;
       if(regra.chave==="juros"||regra.chave==="liquido")candidatos.push({data,valor,doc,nome,chave:regra.chave,usado:false});
-      pj.push({data,valor:valor/100,debito:null,credito:null,doc,historico:regra.prefixo+" "+nota+" DO CONVÊNIO "+nome.toUpperCase()+" REFERENTE SERVIÇOS PRESTADOS.",...(data<36526?{avisoData:"Data atípica — confira aba "+aba+", linha "+(i+1)+" do arquivo original."}:{})});
+      pj.push({data,valor:valor/100,debito:null,credito:null,doc,cliente:nome,natureza:regra.chave,historico:regra.prefixo+" "+nota+" DO CONVÊNIO "+nome.toUpperCase()+" REFERENTE SERVIÇOS PRESTADOS.",...(data<36526?{avisoData:"Data atípica — confira aba "+aba+", linha "+(i+1)+" do arquivo original."}:{})});
     }
     if((!vazio(cel("bruto"))&&centavos(cel("bruto"),aba,i+1)!==soma)||(!vazio(cel("lei"))&&centavos(cel("lei"),aba,i+1)!==pcc))divergencias++;
     // Colunas numéricas desconhecidas não são descartadas silenciosamente,
