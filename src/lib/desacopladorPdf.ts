@@ -4,6 +4,9 @@ export type SugestaoPagina = {
   empresa: string | null;
   motivo: string;
   continuacao?: string;
+  paginaImpressa?: number;
+  inferida?: boolean;
+  revisar?: boolean;
 };
 
 export const normalizarNomePdf = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim();
@@ -23,43 +26,96 @@ function titulares(linhas: string[]): string[] {
   });
 }
 
+/** Numeração impressa no cabeçalho, independente da posição física no PDF. */
+export function numeroImpresso(pagina: PaginaPdf): number | undefined {
+  const numeros = [...new Set(pagina.cabecalho.flatMap(linha =>
+    [...linha.matchAll(/\bP[aá]g(?:ina)?\.?\s*[:.]?\s*(\d{1,7})\b/gi)].map(m => Number(m[1]))
+  ))];
+  return numeros.length === 1 ? numeros[0] : undefined;
+}
+
 export function sugerirPaginas(paginas: PaginaPdf[], empresas: string[]): SugestaoPagina[] {
   let anterior: string | undefined;
-  return paginas.map(pagina => {
+  const resultado: SugestaoPagina[] = [];
+  for (const pagina of paginas) {
+    const paginaImpressa = numeroImpresso(pagina);
     const nomes = titulares(pagina.cabecalho);
     const topo = pagina.cabecalho.join(" ");
     const texto = pagina.linhas.join(" ");
     const noTopo = empresas.filter(e => contemNome(topo, e));
     const noTexto = empresas.filter(e => contemNome(texto, e));
-    if (!normalizarNomePdf(texto)) {
-      anterior = undefined;
-      return {pagina, empresa: null, motivo: "Sem texto legível. Confira a página visualmente."};
-    }
+    const anteriorFisica = resultado[resultado.length - 1];
+    const consecutiva = anteriorFisica && pagina.numero === anteriorFisica.pagina.numero + 1;
+    if (!consecutiva) anterior = undefined;
+    let sugestao: SugestaoPagina = {pagina, paginaImpressa, empresa: null, motivo: ""};
     if (noTopo.length > 1 || noTexto.length > 1) {
       anterior = undefined;
-      return {pagina, empresa: null, motivo: "Mais de uma empresa solicitada aparece na página. Não foi atribuída automaticamente."};
-    }
-    if (nomes.length) {
+      sugestao.motivo = "Mais de uma empresa solicitada aparece na página. Revise manualmente.";
+      sugestao.revisar = true;
+    } else if (nomes.length) {
       const candidatos = empresas.filter(e => nomes.some(n => contemNome(n, e)));
       const contradicao = nomes.some(n => !candidatos.some(e => contemNome(n, e)));
       if (candidatos.length === 1 && !contradicao) {
         anterior = candidatos[0];
-        return {pagina, empresa: anterior, motivo: "Nome encontrado em cabeçalho identificado."};
+        sugestao.empresa = anterior;
+        sugestao.motivo = "Nome encontrado em cabeçalho identificado.";
+      } else {
+        anterior = undefined;
+        sugestao.motivo = "Cabeçalho de outra empresa ou identificação incerta.";
+        if (candidatos.length || noTexto.length) sugestao.revisar = true;
       }
-      anterior = undefined;
-      return {pagina, empresa: null, motivo: "Cabeçalho de outra empresa ou identificação incerta."};
-    }
-    if (noTopo.length === 1) {
+    } else if (noTopo.length === 1) {
       anterior = noTopo[0];
-      return {pagina, empresa: anterior, motivo: "Nome encontrado na região superior. Confira o titular."};
-    }
-    if (noTexto.length) {
+      sugestao.empresa = anterior;
+      sugestao.motivo = "Nome encontrado na região superior. Confira o titular.";
+    } else if (noTexto.length && noTexto[0] !== anterior) {
       anterior = undefined;
-      return {pagina, empresa: null, motivo: "Nome encontrado apenas no corpo do documento. Confira o titular."};
+      sugestao.motivo = "Nome encontrado apenas no corpo do documento. Confira o titular.";
+      sugestao.revisar = true;
+    } else if (anterior) {
+      sugestao.continuacao = anterior;
+      const anteriorImpresso = anteriorFisica?.paginaImpressa;
+      if (paginaImpressa !== undefined && anteriorImpresso !== undefined && paginaImpressa === anteriorImpresso + 1 && anteriorFisica?.empresa === anterior) {
+        sugestao.empresa = anterior;
+        sugestao.inferida = true;
+        sugestao.motivo = "Continuação pela numeração impressa consecutiva. Confira o titular.";
+      } else {
+        sugestao.revisar = true;
+        sugestao.motivo = "Possível continuação da empresa anterior. Revise para não pular páginas.";
+        // Reinício ou salto na numeração: não propagar a titularidade automaticamente.
+        if (paginaImpressa !== undefined && anteriorImpresso !== undefined && paginaImpressa !== anteriorImpresso + 1) {
+          anterior = undefined;
+          sugestao.continuacao = undefined;
+          sugestao.motivo = "Numeração impressa reiniciada ou descontínua. Revise o titular.";
+        }
+      }
+    } else {
+      sugestao.motivo = normalizarNomePdf(texto) ? "Empresa não identificada; página inicialmente excluída." : "Sem texto legível. Confira a página visualmente.";
     }
-    // Nunca presume que toda página sem nome pertence à última empresa.
-    return {pagina, empresa: null, continuacao: anterior, motivo: anterior ? "Possível continuação; confira e atribua manualmente." : "Empresa não identificada; página inicialmente excluída."};
-  });
+    resultado.push(sugestao);
+  }
+  // Preenche lacunas entre páginas da mesma empresa, sem atravessar
+  // cabeçalhos de outras empresas, conflitos ou reinícios de numeração.
+  for (let i = 0; i < resultado.length; i++) {
+    const primeira = resultado[i];
+    if (!primeira.empresa) continue;
+    let j = i + 1;
+    while (j < resultado.length && !resultado[j].empresa && resultado[j].continuacao === primeira.empresa &&
+      resultado[j].pagina.numero === resultado[j-1].pagina.numero + 1) j++;
+    if (j === i + 1 || j >= resultado.length || resultado[j].empresa !== primeira.empresa ||
+        resultado[j].pagina.numero !== resultado[j-1].pagina.numero + 1) continue;
+    const trecho = resultado.slice(i, j + 1);
+    const numeradas = trecho.filter(p => p.paginaImpressa !== undefined);
+    if (numeradas.some((p, k) => k > 0 && p.paginaImpressa! - numeradas[k-1].paginaImpressa! !== p.pagina.numero - numeradas[k-1].pagina.numero)) continue;
+    for (let k = i + 1; k < j; k++) {
+      resultado[k].empresa = primeira.empresa;
+      resultado[k].inferida = true;
+      resultado[k].revisar = false;
+      resultado[k].motivo = "Página intermediária entre duas páginas da mesma empresa. Confira o titular.";
+    }
+    i = j - 1;
+  }
+  return resultado;
 }
 
 function cancelar(signal?: AbortSignal) {
