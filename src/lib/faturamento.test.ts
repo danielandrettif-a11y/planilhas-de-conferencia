@@ -24,4 +24,22 @@ describe("Faturamento",()=>{
     const r=converterFaturamento([pfHeader],[pjHeader,["EXEMPLO","9",100,0,0,0,0,0,0,0,99.99,"02/10/2026"]]);
     expect(r.divergencias).toBe(1);expect(r.pj[0].valor).toBe(99.99);
   });
+  it("reconhece cabeçalhos em duas linhas e não duplica o subtotal LEI",()=>{
+    const r=converterFaturamento([pfHeader,[42,231,100,"2026-10-01","CONVENIO EXEMPLO NF 1"]],[
+      ["CONVENIOS","NOTA","VALOR","","DESCONTOS EFETUADOS","","","","","","","DATA"],
+      ["","FISCAL","APRES.","IRF","PIS","COFINS","IRPJ","CSLL","LEI","GUIA ISS À PAGAR","LIQ.REC","PAGAMENTO"],
+      ["LEI 10.833"],
+      ["CONVENIO FICTICIO",1,100,1,2,3,0,4,9,5,90,"2026-10-02"],
+      ["TOTAL",null,100,1,2,3,0,4,9,5,90]
+    ]);
+    expect(r.pf).toHaveLength(0);
+    expect(r.pj.map(x=>x.valor)).toEqual([2,4,1,3,5,90]);
+    expect(r.guiasIss).toBe(1);
+    expect(r.divergencias).toBe(0);
+    expect(r.pj[4].historico).toContain("VALOR DO I.S.S. A PAGAR");
+  });
+  it("reconhece ordem diferente de colunas",()=>{
+    const r=converterFaturamento([["DIA","HISTORICO","VALOR","CREDITO","DEBITO"],["2026-10-01","PESSOA EXEMPLO NF 3",10,232,42]],[["NF","DATA","CONVENIO","LIQUIDO","PIS","BRUTO"],[7,"2026-10-01","EXEMPLO",99,1,100]]);
+    expect(r.pf[0].valor).toBe(10);expect(r.pj.map(x=>x.valor)).toEqual([1,99]);
+  });
 });
