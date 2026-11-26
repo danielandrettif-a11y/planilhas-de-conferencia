@@ -1,5 +1,5 @@
 import {describe,it,expect} from "vitest";
-import {converterFaturamento,type Linha} from "./faturamento";
+import {converterFaturamento,converterAbasFaturamento,type Linha} from "./faturamento";
 const pfHeader=["DÉB","CRÉD.","VALOR","DIA","COMPLEMENTO HISTÓRICO"];
 const pjHeader=["CONVENIOS","","","IRF","PIS","COFINS","IRPJ","CSLL","ISS/TX","TAXAS","LIQ.REC","",""];
 const primeira:Linha[]=[["Relatório fictício"],pfHeader,[42,232,120,"2026-10-01","PESSOA EXEMPLO NF.0007"],[42,999,300,"2026-10-01","IGNORAR NF.2"]];
@@ -40,5 +40,14 @@ describe("Faturamento",()=>{
   it("reconhece ordem diferente de colunas",()=>{
     const r=converterFaturamento([["DIA","HISTORICO","VALOR","CREDITO","DEBITO"],["2026-10-01","PESSOA EXEMPLO NF 3",10,232,42]],[["NF","DATA","CONVENIO","LIQUIDO","PIS","BRUTO"],[7,"2026-10-01","EXEMPLO",99,1,100]]);
     expect(r.pf[0].valor).toBe(10);expect(r.pj.map(x=>x.valor)).toEqual([1,99]);
+  });
+});
+
+describe("Modelo de faturamento com abas adicionais",()=>{
+  it("reconhece cabeçalhos repetidos, juros e terceira aba sem IRPJ",()=>{
+    const h=["CONVENIOS","FISCAL","VR.BRUTO","IRRF","PIS","COFINS","CSLL","ISS/TX","JUROS","LIQ.REC","PAGAMENTO"];
+    const h2=["CONVENIOS","NOTA FISCAL","VR.BRUTO","IRRF","PIS","COFINS","CSLL","ISS/TX","LIQ.REC","PAGAMENTO"];
+    const r=converterAbasFaturamento([[["DEB","CRED","VALOR","DIA","CONVENIO"],[42,999,100,"2026-10-01","EXEMPLO NF 1"]],[["","NOTA"],h,["EXEMPLO A",1,100,2,0,0,0,0,5,103,"2026-10-01"],["TITULO"],["","NOTA"],h,["EXEMPLO B",2,100,0,0,0,0,0,0,100,"1904-05-01"]],[h2,["EXEMPLO C",3,100,0,0,0,0,0,100,"2026-10-01"]]]);
+    expect(r.abasPJ).toBe(2);expect(r.pf).toHaveLength(0);expect(r.pj.map(x=>x.valor)).toEqual([2,5,103,100,100]);expect(r.divergencias).toBe(0);expect(r.datasAtipicas).toHaveLength(1);
   });
 });
