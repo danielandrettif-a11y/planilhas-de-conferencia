@@ -22,6 +22,8 @@ dist-ssr
 *.xls
 *.xlsm
 *.xlsb
+*.ods
+*.ots
 *.csv
 *.pdf
 *.zip
