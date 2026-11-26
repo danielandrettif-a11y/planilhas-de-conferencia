@@ -1,5 +1,5 @@
 import {useEffect,useRef,useState} from "react";
-import {converterFaturamento,type Linha} from "@/lib/faturamento";
+import {converterFaturamento,type Linha,type LancamentoFaturamento} from "@/lib/faturamento";
 
 const botao="rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground disabled:opacity-50";
 export default function Faturamento(){
@@ -34,7 +34,7 @@ export default function Faturamento(){
       const wb=new ExcelJS.Workbook();
       const sh=wb.addWorksheet("Planilha1");
       sh.addRow(["DATA","VALOR","DEBITO","CREDITO","Doc","HISTORICO"]);
-      const inserir=(r:typeof resultado.pf[number])=>sh.addRow([r.data,r.valor,r.debito,r.credito,r.doc,r.historico]);
+      const inserir=(r:LancamentoFaturamento)=>sh.addRow([r.data,r.valor,r.debito,r.credito,r.doc,r.historico]);
       resultado.pf.forEach(inserir);
       if(resultado.pf.length&&resultado.pj.length)sh.addRow([]);
       resultado.pj.forEach(inserir);
