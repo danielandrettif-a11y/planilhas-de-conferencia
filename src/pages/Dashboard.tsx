@@ -9,6 +9,7 @@ import FolhaPagamento from "./FolhaPagamento";
 import Autonomo from "./Autonomo";
 import Ferias from "./Ferias";
 import DesacopladorPdf from "./DesacopladorPdf";
+import Faturamento from "./Faturamento";
 
 declare const __SITE_BUILD_TIME__: string;
 const ultimaAtualizacao = new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" }).format(new Date(__SITE_BUILD_TIME__));
@@ -84,7 +85,7 @@ const Dashboard = () => {
                 <span className="flex w-full items-start justify-between"><span className="rounded-2xl bg-primary/10 p-4 text-primary"><FileText className="h-7 w-7" aria-hidden="true" /></span><ArrowUpRight className="h-5 w-5 text-muted-foreground group-hover:text-primary" aria-hidden="true" /></span>
                 <span className="mt-6 text-2xl font-semibold tracking-tight">Lançamento</span>
                 <span className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">Acesse as áreas de folha, férias, autônomo, faturamento e separação de PDFs.</span>
-                <span className="mt-4 rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground">Funcionalidades em desenvolvimento</span>
+                <span className="mt-4 rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground">Conversão de arquivos e documentos</span>
                 <span className="mt-auto pt-6 text-sm font-semibold text-primary">Acessar lançamentos <span aria-hidden="true">→</span></span>
               </button>
             </div>
@@ -103,7 +104,7 @@ const Dashboard = () => {
               <button type="button" onClick={() => setSelected(null)} className="mb-8 inline-flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground">
                 <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Voltar para Lançamento
               </button>
-              {selected === "folha" ? <FolhaPagamento /> : selected === "autonomo" ? <Autonomo /> : selected === "ferias" ? <Ferias /> : selected === "desacoplador" ? <DesacopladorPdf /> : <div className="rounded-3xl border border-border bg-card p-8 shadow-[var(--shadow-soft)] sm:p-12">
+              {selected === "folha" ? <FolhaPagamento /> : selected === "autonomo" ? <Autonomo /> : selected === "ferias" ? <Ferias /> : selected === "desacoplador" ? <DesacopladorPdf /> : selected === "faturamento" ? <Faturamento /> : <div className="rounded-3xl border border-border bg-card p-8 shadow-[var(--shadow-soft)] sm:p-12">
                 <div className="mb-6 inline-flex rounded-2xl bg-primary/10 p-4 text-primary"><selectedModule.icon className="h-7 w-7" aria-hidden="true" /></div>
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">Lançamento</p>
                 <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">{selectedModule.title}</h1>
@@ -127,7 +128,6 @@ const Dashboard = () => {
                     <span className="flex w-full items-start justify-between"><span className="rounded-xl bg-primary/10 p-3 text-primary"><module.icon className="h-5 w-5" aria-hidden="true" /></span><ArrowUpRight className="h-5 w-5 text-muted-foreground transition-colors group-hover:text-primary" aria-hidden="true" /></span>
                     <span className="mt-5 text-lg font-semibold">{module.title}</span>
                     <span className="mt-1 text-sm text-muted-foreground">{module.description}</span>
-                    {module.id === "faturamento" && <span className="mt-4 text-xs font-medium text-muted-foreground">Em desenvolvimento</span>}
                   </button>
                 ))}
               </div>
