@@ -51,3 +51,26 @@ describe("Modelo de faturamento com abas adicionais",()=>{
     expect(r.abasPJ).toBe(2);expect(r.pf).toHaveLength(0);expect(r.pj.map(x=>x.valor)).toEqual([2,5,103,100,100]);expect(r.divergencias).toBe(0);expect(r.datasAtipicas).toHaveLength(1);
   });
 });
+
+describe("Conferência cruzada da primeira aba",()=>{
+  it("remove apenas correspondências inequívocas e preserva os demais registros",()=>{
+    const h=["CONVENIOS","NF","BRUTO","IRRF","PIS","COFINS","CSLL","ISS/TX","JUROS","LIQ.REC","PAGAMENTO"];
+    const r=converterAbasFaturamento([
+      [pfHeader,[42,1715,5,"2026-10-01","EXEMPLO NF. 001"],[42,1715,100,"2026-10-02","CLIENTE (SERVICO SITE)"],[42,1715,12,"2026-10-03","RECEBIMENTO TOTAL"],[42,1715,7,"2026-10-04","OUTRO NF 3"]],
+      [h,["EXEMPLO",1,100,0,0,0,0,0,5,105,"2026-10-01"],["CLIENTE (SERVICO DE SITE)","S/NF",100,0,0,0,0,0,0,100,"2026-10-02"],["OUTRO",3,100,0,0,0,0,0,8,108,"2026-10-04"]],
+      [h,["EXEMPLO",9,10,0,0,0,0,0,0,10,"1904-05-01"]]
+    ]);
+    expect(r.duplicadosPrimeira).toBe(2);
+    expect(r.adicionaisPrimeira).toBe(2);
+    expect(r.pj.filter(x=>x.avisoRevisao).map(x=>[x.valor,x.doc,x.debito,x.credito])).toEqual([[12,"",null,null],[7,"3",null,null]]);
+    expect(r.pj.filter(x=>x.avisoData)).toHaveLength(1);
+    expect(r.datasAtipicas).toEqual(["Aba 3, linha 2"]);
+  });
+  it("não descarta correspondências ambíguas ou reutiliza uma mesma correspondência",()=>{
+    const h=["CONVENIOS","NF","BRUTO","PIS","JUROS","LIQ.REC","PAGAMENTO"];
+    const primeira:Linha[]=[pfHeader,[42,1715,5,"2026-10-01","EXEMPLO NF 1"],[42,1715,5,"2026-10-01","EXEMPLO NF 1"],[42,1715,6,"2026-10-01","EXEMPLO NF 2"]];
+    const r=converterAbasFaturamento([primeira,[h,["EXEMPLO",1,100,0,5,105,"2026-10-01"],["EXEMPLO",2,100,0,6,106,"2026-10-01"],["EXEMPLO",2,200,0,6,206,"2026-10-01"]]]);
+    expect(r.duplicadosPrimeira).toBe(1);
+    expect(r.adicionaisPrimeira).toBe(2);
+  });
+});
