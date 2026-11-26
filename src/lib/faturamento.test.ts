@@ -33,10 +33,9 @@ describe("Faturamento",()=>{
       ["TOTAL",null,100,1,2,3,0,4,9,5,90]
     ]);
     expect(r.pf).toHaveLength(0);
-    expect(r.pj.map(x=>x.valor)).toEqual([2,4,1,3,5,90]);
-    expect(r.guiasIss).toBe(1);
+    expect(r.pj.map(x=>x.valor)).toEqual([2,4,1,3,90]);
     expect(r.divergencias).toBe(0);
-    expect(r.pj[4].historico).toContain("VALOR DO I.S.S. A PAGAR");
+    expect(r.pj.some(x=>x.historico.includes("A PAGAR"))).toBe(false);
   });
   it("reconhece ordem diferente de colunas",()=>{
     const r=converterFaturamento([["DIA","HISTORICO","VALOR","CREDITO","DEBITO"],["2026-10-01","PESSOA EXEMPLO NF 3",10,232,42]],[["NF","DATA","CONVENIO","LIQUIDO","PIS","BRUTO"],[7,"2026-10-01","EXEMPLO",99,1,100]]);
