@@ -19,4 +19,22 @@ describe("Desacoplador de PDF",()=>{
     const r=sugerirPaginas([p(1,["ALFA LTDA"]),p(2,["Continuação"]),p(3,[])],["ALFA"]);
     expect(r[1].empresa).toBeNull();expect(r[1].continuacao).toBe("ALFA");expect(r[2].empresa).toBeNull();
   });
+  it("inclui a página 90 e a continuação final pela numeração impressa",()=>{
+    const r=sugerirPaginas([p(1,["Empresa: ALFA LTDA","Pag. 89"]),p(2,["Pag. 90"]),p(3,["Pag. 91"])],["ALFA"]);
+    expect(r.map(x=>x.empresa)).toEqual(["ALFA","ALFA","ALFA"]);
+    expect(r[1].inferida).toBe(true);
+  });
+  it("preenche uma lacuna entre páginas da mesma empresa",()=>{
+    const r=sugerirPaginas([p(1,["ALFA LTDA","Pag. 89"]),p(2,["Continuação"]),p(3,["ALFA LTDA","Pag. 91"])],["ALFA"]);
+    expect(r.map(x=>x.empresa)).toEqual(["ALFA","ALFA","ALFA"]);
+  });
+  it("não atravessa cabeçalho de outra empresa nem reinício de paginação",()=>{
+    const r=sugerirPaginas([p(1,["Empresa: ALFA","Pag. 89"]),p(2,["Empresa: GAMA","Pag. 90"]),p(3,["Pag. 91"]),p(4,["Empresa: ALFA","Pag. 92"]),p(5,["Pag. 1"])],["ALFA"]);
+    expect(r.map(x=>x.empresa)).toEqual(["ALFA",null,null,"ALFA",null]);
+    expect(r[4].revisar).toBe(true);
+  });
+  it("sinaliza última página sem numeração para revisão",()=>{
+    const r=sugerirPaginas([p(1,["Empresa: ALFA"]),p(2,["Continuação"])],["ALFA"]);
+    expect(r[1].revisar).toBe(true);
+  });
 });

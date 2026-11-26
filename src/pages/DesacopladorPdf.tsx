@@ -29,6 +29,7 @@ export default function DesacopladorPdf(){
   const ready=empresas.length>0&&empresas.every(e=>/[A-Z]/.test(normalizarNomePdf(e)))&&(!selecao.multipla||!empresa.trim());
   const aliases=aliasesEmpresasZip(empresas);
   const nomes=empresas.map((e,i)=>({empresa:e,alias:aliases[i],paginas:sugestoes.filter(s=>atribuicoes[s.pagina.numero]===e).map(s=>s.pagina.numero)}));
+  const pendentes=sugestoes.filter(s=>atribuicoes[s.pagina.numero]==="__pendente__");
   const limpar=()=>{invalidar();setEmpresa("");selecao.limparSelecao();setTipo("");setMes("");};
   const carregar=async(file:File)=>{
     invalidar();const c=new AbortController();controller.current=c;const v=versao.current;setOcupado(true);
@@ -37,7 +38,7 @@ export default function DesacopladorPdf(){
       if(v!==versao.current)return;
       const resultado=sugerirPaginas(paginas,empresas);
       original.current=file;setSugestoes(resultado);
-      setAtribuicoes(Object.fromEntries(resultado.map(s=>[s.pagina.numero,s.empresa??""])));
+      setAtribuicoes(Object.fromEntries(resultado.map(s=>[s.pagina.numero,s.empresa??(s.revisar?"__pendente__":"")])));
     }catch(e){if(v===versao.current)setErro(e instanceof Error?e.message:"Não foi possível ler o PDF.");}
     finally{if(v===versao.current){setOcupado(false);setProgresso("");controller.current=null;}}
   };
@@ -55,7 +56,7 @@ export default function DesacopladorPdf(){
     finally{bytes?.fill(0);if(v===versao.current)setOcupado(false);}
   };
   const exportar=async()=>{
-    const file=original.current;if(!file||!confirmado||ocupado||!nomes.every(n=>n.paginas.length))return;
+    const file=original.current;if(!file||!confirmado||ocupado||pendentes.length>0||!nomes.every(n=>n.paginas.length))return;
     const v=versao.current;setOcupado(true);setErro("");const arquivos:ArquivoZip[]=[];
     try{
       if(nomes.length===1){await baixarPdf(file,nomes[0].paginas,nomePdf(nomes[0].alias),()=>v===versao.current);}
@@ -84,16 +85,17 @@ export default function DesacopladorPdf(){
     {preview&&<div className="rounded-xl border bg-card p-4 space-y-2"><p className="font-medium">Página {preview.pagina}</p><a className="text-primary underline" href={preview.url} target="_blank" rel="noopener noreferrer">Abrir página em nova aba</a><button type="button" className="ml-4 text-sm underline" onClick={fecharPreview}>Fechar prévia</button></div>}
     {sugestoes.length>0&&<div className="space-y-4 rounded-2xl border bg-card p-6">
       <h2 className="text-xl font-semibold">Confira a separação</h2>
-      <p className="text-sm text-muted-foreground">Revise todas as páginas, inclusive as excluídas. Páginas sem identificação segura não são incluídas automaticamente. Se uma página contém documentos de empresas diferentes, não a atribua: a ferramenta não recorta partes de páginas.</p>
+      <p className="text-sm text-muted-foreground">Revise todas as páginas, inclusive as excluídas. Páginas consecutivas podem ser atribuídas pela numeração; lacunas incertas exigem uma decisão antes do download. Se uma página contém documentos de empresas diferentes, não a atribua: a ferramenta não recorta partes de páginas.</p>
       <div className="grid gap-2 sm:grid-cols-2">{nomes.map(n=><div key={n.empresa} className="rounded-lg border p-3"><p className="font-semibold break-words">{n.empresa}</p><p className={n.paginas.length?"text-sm text-primary":"text-sm text-destructive"}>{n.paginas.length} página(s): {n.paginas.join(", ")||"nenhuma"}</p></div>)}</div>
       <div className="max-h-[60vh] space-y-3 overflow-auto">{sugestoes.map(s=><div key={s.pagina.numero} className="rounded-lg border p-3 space-y-2">
-        <div className="flex flex-wrap items-center justify-between gap-2"><strong>Página {s.pagina.numero}</strong><button type="button" disabled={ocupado} className="text-sm text-primary underline" onClick={()=>void mostrarPagina(s.pagina.numero)}>Visualizar página</button></div>
+        <div className="flex flex-wrap items-center justify-between gap-2"><strong>Página {s.pagina.numero}{s.paginaImpressa!==undefined?` (Pag. ${s.paginaImpressa})`:""}</strong><button type="button" disabled={ocupado} className="text-sm text-primary underline" onClick={()=>void mostrarPagina(s.pagina.numero)}>Visualizar página</button></div>
         <p className="text-xs text-muted-foreground">{s.motivo}{s.continuacao?" Sugestão: "+s.continuacao:""}</p>
         <details><summary className="cursor-pointer text-sm">Texto do cabeçalho</summary><p className="mt-2 whitespace-pre-wrap break-words text-xs">{s.pagina.cabecalho.join("\n")||"Sem texto extraído."}</p></details>
-        <label className="block text-sm">Empresa desta página<select className={input} disabled={ocupado} value={atribuicoes[s.pagina.numero]||""} onChange={e=>{setAtribuicoes(old=>({...old,[s.pagina.numero]:e.target.value}));setConfirmado(false);}}><option value="">Excluir página</option>{empresas.map(e=><option key={e} value={e}>{e}</option>)}</select></label>
+        <label className="block text-sm">Empresa desta página<select className={input} disabled={ocupado} value={atribuicoes[s.pagina.numero]||""} onChange={e=>{setAtribuicoes(old=>({...old,[s.pagina.numero]:e.target.value}));setConfirmado(false);}}><option value="__pendente__" disabled>Revisão pendente</option><option value="">Excluir página</option>{empresas.map(e=><option key={e} value={e}>{e}</option>)}</select></label>
       </div>)}</div>
+      {pendentes.length>0&&<p role="alert" className="text-sm text-destructive">Resolva {pendentes.length} página(s) pendente(s) antes de baixar: {pendentes.map(s=>s.paginaImpressa??s.pagina.numero).join(", ")}.</p>}
       <p className="text-sm">{sugestoes.filter(s=>!atribuicoes[s.pagina.numero]).length} página(s) excluída(s).</p>
-      <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmado} disabled={ocupado} onChange={e=>setConfirmado(e.target.checked)}/> Revisei a titularidade de todas as páginas e confirmo que os PDFs não contêm documentos de outras empresas.</label>
+      <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmado} disabled={ocupado||pendentes.length>0} onChange={e=>setConfirmado(e.target.checked)}/> Revisei a titularidade de todas as páginas e confirmo que os PDFs não contêm documentos de outras empresas.</label>
       <button type="button" className={botao} disabled={!confirmado||ocupado||!nomes.every(n=>n.paginas.length)} onClick={()=>void exportar()}>{ocupado?"Processando...":nomes.length===1?"Baixar PDF da empresa":"Baixar ZIP de todas as empresas"}</button>
     </div>}
   </section>;
