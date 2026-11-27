@@ -30,7 +30,7 @@ export default function Faturamento(){
       entrada=new Uint8Array(await arquivo.arrayBuffer());
       if(v!==versao.current)return;
       const origem=XLSX.read(entrada,{type:"array",cellDates:false,cellFormula:false,cellHTML:false,cellNF:false,cellText:false});
-      if(origem.SheetNames.length<2)throw new Error("Envie o modelo com pelo menos duas abas.");
+      if(!origem.SheetNames.length)throw new Error("Envie o modelo com pelo menos uma aba.");
       abas=origem.SheetNames.map(nome=>XLSX.utils.sheet_to_json<Linha>(origem.Sheets[nome],{header:1,raw:true,blankrows:true}));
       resultado=converterAbasFaturamento(abas,!!origem.Workbook?.WBProps?.date1904);
       const sugeridos=listarClientes(resultado);
