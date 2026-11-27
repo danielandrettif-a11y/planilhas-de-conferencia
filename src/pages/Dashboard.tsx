@@ -10,18 +10,20 @@ import Autonomo from "./Autonomo";
 import Ferias from "./Ferias";
 import DesacopladorPdf from "./DesacopladorPdf";
 import Faturamento from "./Faturamento";
+import Recebimentos from "./Recebimentos";
 
 declare const __SITE_BUILD_TIME__: string;
 const ultimaAtualizacao = new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" }).format(new Date(__SITE_BUILD_TIME__));
 
 type Area = "inicio" | "conferencias" | "lancamento";
-type ModuleId = "folha" | "ferias" | "autonomo" | "faturamento" | "desacoplador";
+type ModuleId = "folha" | "ferias" | "autonomo" | "faturamento" | "desacoplador" | "recebimentos";
 
 const modules = [
   { id: "folha", title: "Folha de pagamento", description: "Organize os lançamentos da folha de pagamento.", icon: WalletCards },
   { id: "ferias", title: "Férias", description: "Prepare os lançamentos relacionados às férias.", icon: CalendarDays },
   { id: "autonomo", title: "Autônomo", description: "Organize os lançamentos de profissionais autônomos.", icon: HardHat },
   { id: "faturamento", title: "Faturamento", description: "Prepare os lançamentos de faturamento.", icon: ReceiptText },
+  { id: "recebimentos", title: "Recebimentos Bancários", description: "Confira baixas, juros e descontos e gere lançamentos bancários.", icon: WalletCards },
   { id: "desacoplador", title: "Desacoplador de PDF", description: "Separe documentos de várias empresas em PDFs individuais.", icon: Scissors },
 ] as const;
 
@@ -84,7 +86,7 @@ const Dashboard = () => {
               <button type="button" onClick={() => changeArea("lancamento")} className="group flex min-h-64 flex-col items-start rounded-3xl border border-border bg-card p-7 text-left shadow-sm transition-all hover:-translate-y-1 hover:border-primary/50 hover:shadow-[var(--shadow-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:p-8">
                 <span className="flex w-full items-start justify-between"><span className="rounded-2xl bg-primary/10 p-4 text-primary"><FileText className="h-7 w-7" aria-hidden="true" /></span><ArrowUpRight className="h-5 w-5 text-muted-foreground group-hover:text-primary" aria-hidden="true" /></span>
                 <span className="mt-6 text-2xl font-semibold tracking-tight">Lançamento</span>
-                <span className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">Acesse as áreas de folha, férias, autônomo, faturamento e separação de PDFs.</span>
+                <span className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">Acesse as áreas de folha, férias, autônomo, faturamento, recebimentos e separação de PDFs.</span>
                 <span className="mt-4 rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground">Conversão de arquivos e documentos</span>
                 <span className="mt-auto pt-6 text-sm font-semibold text-primary">Acessar lançamentos <span aria-hidden="true">→</span></span>
               </button>
@@ -104,7 +106,7 @@ const Dashboard = () => {
               <button type="button" onClick={() => setSelected(null)} className="mb-8 inline-flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground">
                 <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Voltar para Lançamento
               </button>
-              {selected === "folha" ? <FolhaPagamento /> : selected === "autonomo" ? <Autonomo /> : selected === "ferias" ? <Ferias /> : selected === "desacoplador" ? <DesacopladorPdf /> : selected === "faturamento" ? <Faturamento /> : <div className="rounded-3xl border border-border bg-card p-8 shadow-[var(--shadow-soft)] sm:p-12">
+              {selected === "folha" ? <FolhaPagamento /> : selected === "autonomo" ? <Autonomo /> : selected === "ferias" ? <Ferias /> : selected === "desacoplador" ? <DesacopladorPdf /> : selected === "faturamento" ? <Faturamento /> : selected === "recebimentos" ? <Recebimentos /> : <div className="rounded-3xl border border-border bg-card p-8 shadow-[var(--shadow-soft)] sm:p-12">
                 <div className="mb-6 inline-flex rounded-2xl bg-primary/10 p-4 text-primary"><selectedModule.icon className="h-7 w-7" aria-hidden="true" /></div>
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">Lançamento</p>
                 <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">{selectedModule.title}</h1>
