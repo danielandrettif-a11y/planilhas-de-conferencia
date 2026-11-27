@@ -52,8 +52,8 @@ type CampoPJ = typeof regrasPJ[number]["chave"]|"nome"|"doc"|"bruto"|"data"|"lei
 // LEI e GUIA ISS A PAGAR são reconhecidas no layout, mas não geram lançamentos.
 const nomesPJ:Record<CampoPJ,string[]>={
   nome:["CONVENIO","CONVENIOS","RAZAOSOCIAL","EMPRESA"],doc:["NOTA","FISCAL","NOTAFISCAL","NF","NUMERONF","NUMERODANOTA"],
-  bruto:["BRUTODANF","BRUTONF","VALORBRUTO","VRBRUTO","VALORAPRES","VALORAPRESENTADO","VALORDA NF".replace(/ /g,""),"BRUTO"],
-  data:["DATA","DATAPAGAMENTO","DATADOPAGAMENTO","DATARECEBIMENTO","PAGAMENTO","DIA"],
+  bruto:["BRUTODANF","BRUTONF","VALORBRUTO","VRBRUTO","VALORAPRES","APRES","VALORAPRESENTADO","VALORDA NF".replace(/ /g,""),"BRUTO"],
+  data:["DATA","DATACREDITO","DATADOCREDITO","DATAPAGAMENTO","DATADOPAGAMENTO","DATARECEBIMENTO","PAGAMENTO","DIA"],
   irf:["IRF","IRRF"],pis:["PIS"],cofins:["COFINS"],irpj:["IRPJ"],csll:["CSLL"],
   iss:["ISS","ISSTX","ISSRETIDO"],taxas:["TAXAS","TAXA"],juros:["JUROS","VALORJUROS","JUROSRECEBIDOS"],guiaIss:["GUIAISSAPAGAR","ISSAPAGAR"],
   liquido:["LIQREC","LIQUIDORECEBIDO","LIQUIDO","VALORLIQUIDO"],lei:["LEI","LEI10833","TOTALLEI10833","TOTALPCC"],
@@ -75,11 +75,12 @@ function mapear<T extends string>(linhas:Linha[], inicio:number, altura:number, 
   }
   return mapa;
 }
-function identificarPF(linhas:Linha[]){
+function identificarPF(linhas:Linha[],opcional=false){
   for(let i=0;i<linhas.length;i++){
     const m=mapear(linhas,i,1,nomesPF);
     if(m&&Object.keys(nomesPF).every(k=>m[k as keyof MapaPF]!==undefined))return {fim:i,mapa:m as MapaPF};
   }
+  if(opcional)return null;
   throw new Error("Aba 1: cabeçalho de lançamentos não reconhecido.");
 }
 function identificarPJ(linhas:Linha[],aba=2,inicio=0,apenasInicio=false){
@@ -105,16 +106,16 @@ function identificarPJ(linhas:Linha[],aba=2,inicio=0,apenasInicio=false){
   throw new Error("Aba "+aba+": cabeçalho de faturamento não reconhecido. Confira as colunas de convênio, NF, bruto, impostos, líquido e data.");
 }
 export function localizarCabecalhos(primeira:Linha[],segunda:Linha[]):[number,number]{
-  return [identificarPF(primeira).fim,identificarPJ(segunda)!.fim];
+  return [identificarPF(primeira)!.fim,identificarPJ(segunda)!.fim];
 }
 export function converterFaturamento(primeira:Linha[],segunda:Linha[],base1904=false):ResultadoFaturamento{
   return converterAbasFaturamento([primeira,segunda],base1904);
 }
 
-/** Primeira aba: PF; demais abas preenchidas: tabelas de NF/PJ identificadas. */
+/** A primeira aba pode conter lançamentos contábeis ou faturamento direto. Abas vazias não interferem. */
 export function converterAbasFaturamento(abas:Linha[][],base1904=false):ResultadoFaturamento{
-  if(abas.length<2)throw new Error("Envie o modelo com pelo menos duas abas.");
-  const primeira=abas[0],a=identificarPF(primeira);
+  if(!abas.length)throw new Error("Envie o modelo com pelo menos uma aba.");
+  const primeira=abas[0],a=identificarPF(primeira,true);
   const pf:LancamentoFaturamento[]=[],pj:LancamentoFaturamento[]=[];
   let divergencias=0,abasPJ=0,duplicadosPrimeira=0,adicionaisPrimeira=0;
   const pendentes:{data:number;valor:number;doc:string;nome:string;historico:string;linha:number}[]=[];
@@ -123,7 +124,7 @@ export function converterAbasFaturamento(abas:Linha[][],base1904=false):Resultad
   const docComparavel=(v:string)=>v.replace(/^0+(?=\d)/,'');
   const datasAtipicas:string[]=[];
   const conferirData=(data:number,aba:number,linha:number)=>{if(data<36526)datasAtipicas.push("Aba "+aba+", linha "+linha);return data;};
-  for(let i=a.fim+1;i<primeira.length;i++){
+  if(a)for(let i=a.fim+1;i<primeira.length;i++){
     const r=primeira[i],m=a.mapa;
     const debito=Number(r[m.debito]),credito=Number(r[m.credito]);
     if(debito!==42||![232,1715].includes(credito))continue;
@@ -141,19 +142,38 @@ export function converterAbasFaturamento(abas:Linha[][],base1904=false):Resultad
     const data=conferirData(dataSerial(r[m.data],1,i+1,base1904),1,i+1);
     pf.push({data,valor:valor/100,debito:42,credito:232,doc,historico:"VALOR RECEBIDO PESSOA FISICA "+nome+" NF "+doc,...(data<36526?{avisoData:"Data atípica — confira aba 1, linha "+(i+1)+" do arquivo original."}:{})});
   }
-  for(let indice=1;indice<abas.length;indice++){
+  for(let indice=a?1:0;indice<abas.length;indice++){
     const segunda=abas[indice],aba=indice+1;
     if(segunda.every(r=>r.every(vazio)))continue;
     let b=identificarPJ(segunda,aba)!;
     abasPJ++;
+    const acumulados=new Map<CampoPJ,number>();
+    let registrosSecao=0;
+    const limparSecao=()=>{acumulados.clear();registrosSecao=0;};
+    const camposValores:CampoPJ[]=["bruto","irf","pis","cofins","irpj","csll","iss","taxas","juros","liquido","lei","guiaIss"];
     for(let i=b.fim+1;i<segunda.length;i++){
     const r=segunda[i];
     const repetido=identificarPJ(segunda,aba,i,true);
-    if(repetido){b=repetido;i=b.fim;continue;}
+    if(repetido){b=repetido;i=b.fim;limparSecao();continue;}
     const m=b.mapa;
     const cel=(k:CampoPJ):Celula=>m[k]===undefined?undefined:r[m[k]!];
     const nome=texto(cel("nome")),doc=texto(cel("doc")).toUpperCase();
-    if(vazio(cel("doc"))&&vazio(cel("data"))&&/^(VALORGERAL|TOTAL|TOTALGERAL|SUBTOTAL)$/.test(normal(nome)))continue;
+    if(vazio(cel("doc"))&&vazio(cel("data"))&&/^(VALORGERAL|TOTAL|TOTALGERAL|SUBTOTAL)$/.test(normal(nome))){limparSecao();continue;}
+    // Cabeçalho inferior repetido: cada célula deve coincidir com a coluna já identificada.
+    const preenchidas=Array.from(r.entries()).filter(([,v])=>!vazio(v));
+    const titulosParciais:Partial<Record<CampoPJ,string[]>>={data:["CREDITO"],bruto:["APRES","VALOR"]};
+    if(preenchidas.length>=3&&preenchidas.every(([c,v])=>{
+      const k=(Object.keys(m) as CampoPJ[]).find(k=>m[k]===c);
+      return k!==undefined&&(nomesPJ[k].includes(normal(v))||(titulosParciais[k]??[]).includes(normal(v)));
+    })&&normal(cel("doc"))==="NF"&&nomesPJ.liquido.includes(normal(cel("liquido")))){limparSecao();continue;}
+    // Subtotal sem rótulo: só descartar se os valores conferirem com a seção anterior.
+    if(!nome&&vazio(cel("doc"))&&vazio(cel("data"))&&registrosSecao>0){
+      const campos=camposValores.filter(k=>!vazio(cel(k)));
+      const colunas=new Set(campos.map(k=>m[k]));
+      if(campos.length>=2&&preenchidas.every(([c])=>colunas.has(c))&&campos.every(k=>Math.abs(centavos(cel(k),aba,i+1)-(acumulados.get(k)??0))<=registrosSecao)){
+        limparSecao();continue;
+      }
+    }
     const temValores=regrasPJ.some(regra=>!vazio(cel(regra.chave)));
     // Títulos de seção sem valores, NF ou data não são lançamentos.
     if(!temValores&&vazio(cel("data"))&&vazio(cel("bruto"))&&(vazio(cel("doc"))||["NOTA","FISCAL","NOTAFISCAL"].includes(normal(cel("doc")))))continue;
@@ -164,6 +184,8 @@ export function converterAbasFaturamento(abas:Linha[][],base1904=false):Resultad
     if(!/^(?:\d+|S\/N|S\/NF|C\/NF)$/.test(doc))throw falha(aba,i+1,"identificação de nota fiscal não reconhecida.");
     const data=conferirData(dataSerial(cel("data"),aba,i+1,base1904),aba,i+1);
     const nota=/^\d+$/.test(doc)?"NF "+doc:doc;
+    registrosSecao++;
+    for(const k of camposValores)if(!vazio(cel(k)))acumulados.set(k,(acumulados.get(k)??0)+centavos(cel(k),aba,i+1));
     let soma=0,pcc=0;
     for(const regra of regrasPJ){
       const valor=centavos(cel(regra.chave),aba,i+1);
