@@ -74,3 +74,18 @@ describe("Conferência cruzada da primeira aba",()=>{
     expect(r.adicionaisPrimeira).toBe(2);
   });
 });
+
+describe("Faturamento direto na primeira aba",()=>{
+ it("lê data crédito, subtotais sem título e cabeçalho inferior repetido",()=>{
+ const h=["","CREDITO","NF","APRES.","IRF","PIS","COFINS","IRPJ","CSLL","ISS/TX","LIQ.REC"];
+ const linhas:Linha[]=[["CONVENIOS","DATA","","VALOR","","DESCONTOS EFETUADOS"],h,["ORGAOS PUBLICOS"],["CLIENTE FICTICIO",46000,101,100,1,0,0,0,0,2,97],["","","",100,1,0,0,0,0,2,97],["LEI 10.833"],h,["OUTRO CLIENTE FICTICIO",46001,102,200,0,1,6,0,2,0,191],["TOTAL:",null,null,200,0,1,6,0,2,0,191]];
+ const r=converterAbasFaturamento([linhas,[],[]]);
+ expect(r.pf).toHaveLength(0);expect(r.abasPJ).toBe(1);expect(r.pj.map(l=>l.valor)).toEqual([1,2,97,1,2,6,191]);
+ expect(r.pj.every(l=>l.debito===null&&l.credito===null)).toBe(true);
+ expect(r.divergencias).toBe(0);expect(converterAbasFaturamento([linhas]).pj).toHaveLength(7);
+ });
+ it("não ignora linha sem identificação que não seja subtotal conferido",()=>{
+ const h=["CONVENIOS","DATA CREDITO","NF","VALOR APRES","PIS","LIQ.REC"];
+ expect(()=>converterAbasFaturamento([[h,["EXEMPLO",46000,1,100,1,99],["","","",500,5,495]]])).toThrow();
+ });
+});
