@@ -119,11 +119,16 @@ export function alertasRecebimento(r:Recebimento,competencia:string):string[]{
  return [...r.avisos,...(destino!==r.data?["Data ajustada para o primeiro dia da competência (último dia do mês anterior)."]:mesData(r.data)!==competencia?["Data de baixa fora da competência selecionada."]:[])];
 }
 export function bloqueado(r:Recebimento):boolean{return r.liquido+r.juros-r.desconto!==r.baixado||r.baixado<r.juros||valores.some(k=>r[k]<0);}
+export const ordemBancos:readonly Banco[]=["bradesco","sicoob","brasil"];
+/** Mantém a ordem de origem dentro de cada banco, sem modificar os registros. */
+export function agruparRecebimentosPorBanco(registros:Recebimento[]):Recebimento[]{
+ return ordemBancos.flatMap(b=>registros.filter(r=>r.banco===b));
+}
 export function gerarLancamentosRecebimentos(registros:Recebimento[],competencia:string):Lancamento[]{
  if(!competenciaValida(competencia))throw new Error("Informe uma competência válida.");
  if(registros.some(bloqueado))throw new Error("Existem divergências de valores que precisam ser corrigidas no arquivo original.");
  const out:Lancamento[]=[];
- for(const r of registros){
+ for(const r of agruparRecebimentosPorBanco(registros)){
   const ref=r.nome.toUpperCase()+" NF "+r.titulo,base={data:dataImportacao(r.data,competencia),doc:r.titulo,origem:r};
   const add=(valor:number,historico:string,tipo:Lancamento["tipo"])=>{if(valor)out.push({...base,valor:valor/100,debito:null,credito:null,historico,tipo});};
   add(r.baixado-r.juros,"VALOR RECEBIDO DE "+ref,"recebimento");

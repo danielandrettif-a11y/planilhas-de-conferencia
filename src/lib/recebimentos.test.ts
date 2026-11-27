@@ -36,3 +36,13 @@ it("respeita a virada de ano e fevereiro bissexto",()=>{
  expect(dataImportacao(excel(2025,12,31),"2026-01")).toBe(excel(2026,1,1));
  expect(dataImportacao(excel(2024,2,29),"2024-03")).toBe(excel(2024,3,1));
 });
+
+it("agrupa bancos em blocos contínuos mantendo os lançamentos de cada título juntos",()=>{
+ const linha=(id:string,banco:string,juros=0,desconto=0)=>[id,"X","CLIENTE FICTICIO",null,null,"01/10/2026",100,100,100+juros-desconto,juros,desconto,"PIX",banco,null,"PAGAMENTO TOTAL",""];
+ const r=analisarRecebimentos([[h,linha("1","SICOOB",3),linha("2","BANCO DO BRASIL"),linha("3","BRADESCO",0,2),linha("4","SICOOB"),linha("5","BRADESCO")]]);
+ const l=gerarLancamentosRecebimentos(r.registros,"2026-10");
+ expect(l.map(x=>x.doc)).toEqual(["3","3","5","1","1","4","2"]);
+ expect(l.map(x=>x.origem.banco)).toEqual(["bradesco","bradesco","bradesco","sicoob","sicoob","sicoob","brasil"]);
+ expect(l.every(x=>x.debito===null&&x.credito===null)).toBe(true);
+ expect(r.registros.map(x=>x.titulo)).toEqual(["1","2","3","4","5"]);
+});
