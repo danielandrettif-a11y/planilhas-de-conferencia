@@ -1,11 +1,9 @@
 import type {Celula,Linha} from "./faturamento";
 export type Banco="bradesco"|"sicoob"|"brasil";
 export const bancos:Record<Banco,string>={bradesco:"Bradesco",sicoob:"Sicoob",brasil:"Banco do Brasil"};
-export type Contas=Record<Banco,number>&{clientes:number;juros:number;desconto:number};
-export const contasPadrao:Contas={bradesco:84,sicoob:1579,brasil:42,clientes:231,juros:562,desconto:1361};
 export type Recebimento={aba:number;linha:number;titulo:string;nome:string;data:number;banco:Banco;original:number;liquido:number;baixado:number;juros:number;desconto:number;tipo:string;observacao:string;avisos:string[]};
 export type ResultadoRecebimentos={registros:Recebimento[];avisos:string[];competencia:string;subtotais:number};
-export type Lancamento={data:number;valor:number;debito:number;credito:number;doc:string;historico:string;tipo:"recebimento"|"juros"|"desconto";origem:Recebimento};
+export type Lancamento={data:number;valor:number;debito:null;credito:null;doc:string;historico:string;tipo:"recebimento"|"juros"|"desconto";origem:Recebimento};
 const txt=(v:Celula)=>String(v??"").trim();
 const norm=(v:Celula)=>txt(v).normalize("NFD").replace(/[\u0300-\u036f]/g,"").toUpperCase().replace(/[^A-Z0-9]/g,"");
 const falha=(aba:number,linha:number,msg:string)=>new Error("Aba "+aba+", linha "+linha+": "+msg);
@@ -106,20 +104,31 @@ export function analisarRecebimentos(abas:Linha[][],base1904=false):ResultadoRec
  for(const r of registros)if((titulos.get(r.titulo)??0)>1)r.avisos.push("Título completo repetido; conferir sem excluir automaticamente.");
  return {registros,avisos,competencia,subtotais};
 }
+export function competenciaValida(competencia:string):boolean{
+ return /^\d{4}-(0[1-9]|1[0-2])$/.test(competencia)&&Number(competencia.slice(0,4))>=1901;
+}
+export function dataImportacao(data:number,competencia:string):number{
+ if(!competenciaValida(competencia))throw new Error("Informe uma competência válida.");
+ const [ano,mes]=competencia.split("-").map(Number);
+ const primeiro=(Date.UTC(ano,mes-1,1)-epoch)/86400000;
+ return data===primeiro-1?primeiro:data;
+}
 export function alertasRecebimento(r:Recebimento,competencia:string):string[]{
- return [...r.avisos,...(mesData(r.data)!==competencia?["Data de baixa fora da competência selecionada."]:[])];
+ if(!competenciaValida(competencia))return [...r.avisos];
+ const destino=dataImportacao(r.data,competencia);
+ return [...r.avisos,...(destino!==r.data?["Data ajustada para o primeiro dia da competência (último dia do mês anterior)."]:mesData(r.data)!==competencia?["Data de baixa fora da competência selecionada."]:[])];
 }
 export function bloqueado(r:Recebimento):boolean{return r.liquido+r.juros-r.desconto!==r.baixado||r.baixado<r.juros||valores.some(k=>r[k]<0);}
-export function gerarLancamentosRecebimentos(registros:Recebimento[],contas:Contas):Lancamento[]{
- if(Object.values(contas).some(v=>!Number.isSafeInteger(v)||v<=0))throw new Error("Preencha todas as contas contábeis com números positivos.");
+export function gerarLancamentosRecebimentos(registros:Recebimento[],competencia:string):Lancamento[]{
+ if(!competenciaValida(competencia))throw new Error("Informe uma competência válida.");
  if(registros.some(bloqueado))throw new Error("Existem divergências de valores que precisam ser corrigidas no arquivo original.");
  const out:Lancamento[]=[];
  for(const r of registros){
-  const ref=r.nome.toUpperCase()+" NF "+r.titulo,base={data:r.data,doc:r.titulo,origem:r};
-  const add=(valor:number,debito:number,credito:number,historico:string,tipo:Lancamento["tipo"])=>{if(valor)out.push({...base,valor:valor/100,debito,credito,historico,tipo});};
-  add(r.baixado-r.juros,contas[r.banco],contas.clientes,"VALOR RECEBIDO DE "+ref,"recebimento");
-  add(r.juros,contas[r.banco],contas.juros,"VALOR RECEBIDO DE JUROS S/ "+ref,"juros");
-  add(r.desconto,contas.desconto,contas.clientes,"VALOR REFERENTE DESCONTO CONCEDIDO S/ "+ref,"desconto");
+  const ref=r.nome.toUpperCase()+" NF "+r.titulo,base={data:dataImportacao(r.data,competencia),doc:r.titulo,origem:r};
+  const add=(valor:number,historico:string,tipo:Lancamento["tipo"])=>{if(valor)out.push({...base,valor:valor/100,debito:null,credito:null,historico,tipo});};
+  add(r.baixado-r.juros,"VALOR RECEBIDO DE "+ref,"recebimento");
+  add(r.juros,"VALOR RECEBIDO DE JUROS S/ "+ref,"juros");
+  add(r.desconto,"VALOR REFERENTE DESCONTO CONCEDIDO S/ "+ref,"desconto");
  }
  return out;
 }
